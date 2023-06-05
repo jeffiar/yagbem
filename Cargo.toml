@@ -11,3 +11,5 @@ strum_macros = "0.24"
 strum = { version = "0.24", features = ["derive"] }
 duplicate = "1.0.0"
 bitflags = "1.2.1"
+
+sdl2 = "0.35.2"

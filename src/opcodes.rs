@@ -60,6 +60,8 @@ pub enum Opcode {
 
     Load16(OpReg16, u16),
     LoadSPHL,
+    LoadHLSPRelative(i8),
+    StoreSP(u16),
     Push(OpReg16),
     Pop(OpReg16),
 
@@ -97,6 +99,8 @@ impl fmt::Display for Instruction {
 
             Load16(rr, mn)          => write!(f, "LD   {rr},${mn:04x}"),
             LoadSPHL                => write!(f, "LD   SP,HL"),
+            LoadHLSPRelative(e)     => write!(f, "LD   HL,SP+${e:02x}"),
+            StoreSP(mn)             => write!(f, "LD   (${mn:04x}),SP"),
             Push(qq)                => write!(f, "PUSH {qq}"),
             Pop(qq)                 => write!(f, "POP  {qq}"),
 
@@ -165,6 +169,8 @@ impl Instruction {
 
             "00_dd0_001" => ins(Load16(OpReg16::parse(d), fetch_imm16()), 3, 12),
             "11_111_001" => ins(LoadSPHL, 1, 8),
+            "11_111_000" => ins(LoadHLSPRelative(fetch_imm8() as i8), 2, 12),
+            "00_001_000" => ins(StoreSP(fetch_imm16()), 3, 20),
             "11_110_101" => ins(Push(OpReg16::AF), 1, 16),
             "11_qq0_101" => ins(Push(OpReg16::parse(q)), 1, 16),
             "11_110_001" => ins(Pop(OpReg16::AF), 1, 16),
@@ -238,16 +244,8 @@ mod tests {
         assert_eq!("POP  DE", d(&[0xd1]));
         assert_eq!("POP  HL", d(&[0xe1]));
         assert_eq!("POP  AF", d(&[0xf1]));
+        assert_eq!("LD   ($6655),SP", d(&[0x08, 0x55, 0x66]));
+        assert_eq!("LD   HL,SP+$30", d(&[0xf8, 0x30]));
+        assert_eq!("LD   HL,SP+$f0", d(&[0xf8, 0xf0]));
     }
-
-    // #[test]
-    // fn check_cycle_counts() {
-    //     let d = Instruction::decode_from_bytes;
-    //     assert_eq!(8, d(&[0x16, 0x45]).cycles);  //LD   D,$45
-    //     assert_eq!(12, d(&[0x36, 0x45]).cycles); //LD   (HL),$45
-    //     assert_eq!(8, d(&[0x74]).cycles); // LD   (HL),H
-    //     assert_eq!(8, d(&[0x56]).cycles); // LD   D,(HL)
-    //     assert_eq!(4, d(&[0x5a]).cycles); // LD   E,D
-    // }
-
 }
