@@ -337,6 +337,7 @@ impl Cpu {
                     self.push_onto_stack(self.pc);
                     self.pc = addr;
                 }
+                Opcode::Return => { self.pc = self.pop_from_stack(); }
 
                 Opcode::NotImplemented(_opcode) => { panic!("Unimplemented opcode")}
             }
@@ -786,7 +787,8 @@ mod tests {
         assert_eq!(cpu.a, 1);
         assert_eq!(cpu.b, 0);
     }
-    
+
+    #[test]
     fn jump_relative_forwards() {
         let mut cpu = Cpu::new_flat();
         cpu.pc = 0x2000;
@@ -812,5 +814,20 @@ mod tests {
         assert_eq!(cpu.mem_read(0xfffc), 0x03);
         assert_eq!(cpu.sp, 0xfffc);
         assert_eq!(cpu.pc, 0x1235); // +1 for the HALT
+    }
+
+    #[test]
+    fn return_unconditional() {
+        let mut cpu = Cpu::new_flat();
+        cpu.pc = 0x8000;
+        cpu.bus.mem_write(0x9000, 0x3c); //INC A
+        cpu.bus.mem_write(0x9001, 0xc9); //RET
+        cpu.bus.mem_write(0x9002, 0x14); //INC D
+        cpu.bus.mem_write(0x9003, 0x76); //HALT
+        cpu.run_instructions_and_halt(&[0xcd, 0x00, 0x90, 0x04]); //CALL $9000 \ INC B
+        assert_eq!(cpu.pc, 0x8005);
+        assert_eq!(cpu.a, 1);
+        assert_eq!(cpu.b, 1);
+        assert_eq!(cpu.d, 0);
     }
 }

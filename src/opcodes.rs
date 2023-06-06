@@ -82,6 +82,7 @@ pub enum Opcode {
     JumpRelative(i8),
 
     Call(u16),
+    Return,
 
     DisableInterrupts,
     EnableInterrupts,
@@ -129,6 +130,7 @@ impl fmt::Display for Instruction {
             JumpRelative(e)         => write!(f, "JR   ${e:02x}"),
 
             Call(mn)                => write!(f, "CALL ${mn:04x}"),
+            Return                  => write!(f, "RET"),
 
             DisableInterrupts       => write!(f, "DI"),
             EnableInterrupts        => write!(f, "EI"),
@@ -209,6 +211,7 @@ impl Instruction {
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
 
             "11_001_101" => ins(Call(fetch_imm16()), 3, 24),
+            "11_001_001" => ins(Return, 1, 16),
 
             "11_110_011" => ins(DisableInterrupts, 1, 4),
             "11_111_011" => ins(EnableInterrupts, 1, 4),
@@ -278,5 +281,6 @@ mod tests {
         assert_eq!("EI", d(&[0xfb]));
         assert_eq!("CALL $5544", d(&[0xcd, 0x44, 0x55]));
         assert_eq!("JR   $f0", d(&[0x18, 0xf0]));
+        assert_eq!("RET", d(&[0xc9]));
     }
 }
