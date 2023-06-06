@@ -4,6 +4,7 @@ use crate::opcodes::{
     Opcode,
     OpReg8,
     OpReg16,
+    Condition,
 };
 use bitflags::bitflags;
 
@@ -52,6 +53,20 @@ impl Mem for Cpu {
         self.bus.mem_read_range(start, end)
     }
 }
+
+fn add_relative(addr: u16, offset: i8) -> u16 {
+    ((addr as i32) + (offset as i32)) as u16
+}
+
+fn condition_met(condition: Condition, flags: Flags) -> bool {
+    match condition {
+        Condition::NZ => { !flags.contains(Flags::Z) },
+        Condition::Z => { flags.contains(Flags::Z) },
+        Condition::NC => { !flags.contains(Flags::C) },
+        Condition::C => { flags.contains(Flags::C) },
+    }
+}
+
 
 impl Cpu {
     pub fn new() -> Self {
@@ -269,7 +284,6 @@ impl Cpu {
         self.reg16_write(reg_pair, val.wrapping_sub(1));
     }
 
-
     pub fn run(&mut self) {
         self.run_with_callback(|_| {});
     }
@@ -278,6 +292,9 @@ impl Cpu {
     pub fn run_with_callback<F>(&mut self, mut callback: F) 
     where F: FnMut(&mut Cpu)
     {
+        let mut num_consecutive_nop = 0;
+        let mut nop = false;
+
         loop {
             callback(self);
 
@@ -285,12 +302,28 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            println!("{:04x}: {:02x} {} {} {}", 
-                      self.pc,
-                      self.mem_read(self.pc),
-                      if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-                      if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-                      instr);
+            match instr.opcode {
+                Opcode::NoOp => { 
+                    if nop {
+                        num_consecutive_nop += 1;
+                    } else {
+                        nop = true;
+                        num_consecutive_nop = 0;
+                    }
+                }
+                _ => { nop = false;}
+            };
+
+            if num_consecutive_nop < 3 {
+                eprintln!("{:04x}: {:02x} {} {} {}", 
+                          self.pc,
+                          self.mem_read(self.pc),
+                          if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+                          if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+                          instr);
+            } else if num_consecutive_nop == 3 {
+                eprintln!("...");
+            }
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -389,11 +422,26 @@ impl Cpu {
                 Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
 
                 Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
-
                 Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
 
-                Opcode::Jump(addr) => { self.pc = addr; }
-                Opcode::JumpRelative(rel) => { self.pc = ((self.pc as i32) + (rel as i32)) as u16; }
+                Opcode::Jump(addr) => {
+                    self.pc = addr;
+                }
+                Opcode::JumpCond(cond, addr) => {
+                    if condition_met(cond, self.flags) {
+                        self.pc = addr;
+                        self.n_cycles += 4;
+                    } 
+                }
+                Opcode::JumpRelative(rel) => {
+                    self.pc = add_relative(self.pc, rel);
+                }
+                Opcode::JumpCondRelative(cond, rel) => { 
+                    if condition_met(cond, self.flags) {
+                        self.pc = add_relative(self.pc, rel);
+                        self.n_cycles += 4;
+                    }
+                }
 
                 Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
                 Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
@@ -935,7 +983,92 @@ mod tests {
         assert_eq!(cpu.d, 0);
         assert_eq!(cpu.h, 1);
     }
-    
+
+    fn test_jump_conditional(code: [u8; 3], starting_flags: Flags, expected_branch: bool) {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = starting_flags;
+        cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
+        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x2000, code[0]); //  | Jump instruction here
+        cpu.bus.mem_write(0x2001, code[1]); //  | (pad with NOP to make 3 bytes)
+        cpu.bus.mem_write(0x2002, code[2]); //  |
+        cpu.bus.mem_write(0x2003, 0x04); // INC B
+        cpu.bus.mem_write(0x2004, 0x76); // HALT
+                                         //
+        cpu.pc = 0x2000;
+        cpu.run();
+
+        if expected_branch {
+            assert_eq!(cpu.a, 1);
+            assert_eq!(cpu.b, 0);
+            assert_eq!(cpu.pc, 0x1ff2);
+        } else {
+            assert_eq!(cpu.a, 0);
+            assert_eq!(cpu.b, 1);
+            assert_eq!(cpu.pc, 0x2005);
+        }
+    }
+
+    #[test]
+    fn jump_conditional_absolute() {
+        let tests = [
+            // NZ condition
+            ([0xc2, 0xf0, 0x1f], Flags::empty()     , true),
+            ([0xc2, 0xf0, 0x1f], Flags::Z           , false),
+            ([0xc2, 0xf0, 0x1f], Flags::C           , true),
+            ([0xc2, 0xf0, 0x1f], Flags::Z | Flags::C, false),
+            // Z condition
+            ([0xca, 0xf0, 0x1f], Flags::empty()     , false),
+            ([0xca, 0xf0, 0x1f], Flags::Z           , true),
+            ([0xca, 0xf0, 0x1f], Flags::C           , false),
+            ([0xca, 0xf0, 0x1f], Flags::Z | Flags::C, true),
+            // NC condition
+            ([0xd2, 0xf0, 0x1f], Flags::empty()     , true),
+            ([0xd2, 0xf0, 0x1f], Flags::Z           , true),
+            ([0xd2, 0xf0, 0x1f], Flags::C           , false),
+            ([0xd2, 0xf0, 0x1f], Flags::Z | Flags::C, false),
+            // C condition
+            ([0xda, 0xf0, 0x1f], Flags::empty()     , false),
+            ([0xda, 0xf0, 0x1f], Flags::Z           , false),
+            ([0xda, 0xf0, 0x1f], Flags::C           , true),
+            ([0xda, 0xf0, 0x1f], Flags::Z | Flags::C, true),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_jump_conditional(code, starting_flags, should_branch);
+        }
+    }
+
+    #[test]
+    fn jump_conditional_relative() {
+        let tests = [
+            // NZ condition
+            ([0x20, -18i8 as u8, 0x00], Flags::empty()     , true),
+            ([0x20, -18i8 as u8, 0x00], Flags::Z           , false),
+            ([0x20, -18i8 as u8, 0x00], Flags::C           , true),
+            ([0x20, -18i8 as u8, 0x00], Flags::Z | Flags::C, false),
+            // Z condition
+            ([0x28, -18i8 as u8, 0x00], Flags::empty()     , false),
+            ([0x28, -18i8 as u8, 0x00], Flags::Z           , true),
+            ([0x28, -18i8 as u8, 0x00], Flags::C           , false),
+            ([0x28, -18i8 as u8, 0x00], Flags::Z | Flags::C, true),
+            // NC condition
+            ([0x30, -18i8 as u8, 0x00], Flags::empty()     , true),
+            ([0x30, -18i8 as u8, 0x00], Flags::Z           , true),
+            ([0x30, -18i8 as u8, 0x00], Flags::C           , false),
+            ([0x30, -18i8 as u8, 0x00], Flags::Z | Flags::C, false),
+            // C condition
+            ([0x38, -18i8 as u8, 0x00], Flags::empty()     , false),
+            ([0x38, -18i8 as u8, 0x00], Flags::Z           , false),
+            ([0x38, -18i8 as u8, 0x00], Flags::C           , true),
+            ([0x38, -18i8 as u8, 0x00], Flags::Z | Flags::C, true),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_jump_conditional(code, starting_flags, should_branch);
+        }
+    }
+
     #[test]
     fn call_unconditional() {
         let mut cpu = Cpu::new_flat();

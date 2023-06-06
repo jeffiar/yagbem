@@ -37,10 +37,18 @@ pub enum OpReg16 {
     HLDec,
 }
 
-#[duplicate_item(OpField; [OpReg8]; [OpReg16])]
+#[derive(Debug, PartialEq, Clone, Copy, FromRepr, strum_macros::Display)]
+pub enum Condition { 
+    NZ,
+    Z,
+    NC,
+    C
+}
+
+#[duplicate_item(OpField; [OpReg8]; [OpReg16]; [Condition];)]
 impl OpField {
     fn parse(val: u8) -> OpField {
-        OpField::from_repr(val.into()).expect("Failed to convert opfield")
+        OpField::from_repr(val.into()).expect("Failed to convert Opfield")
     }
 }
 
@@ -73,7 +81,6 @@ pub enum Opcode {
     Xor(OpReg8),
     Or(OpReg8),
     Cp(OpReg8),
-
     AddImm(u8),
     AdcImm(u8),
     SubImm(u8),
@@ -90,7 +97,9 @@ pub enum Opcode {
     DecPair(OpReg16),
 
     Jump(u16),
+    JumpCond(Condition, u16),
     JumpRelative(i8),
+    JumpCondRelative(Condition, i8),
 
     Call(u16),
     Return,
@@ -149,7 +158,9 @@ impl fmt::Display for Instruction {
             DecPair(dd)             => write!(f, "DEC  {dd}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
+            JumpCond(c,mn)          => write!(f, "JP   {c},${mn:04x}"),
             JumpRelative(e)         => write!(f, "JR   ${e:02x}"),
+            JumpCondRelative(c,e)   => write!(f, "JR   {c},${e:02x}"),
 
             Call(mn)                => write!(f, "CALL ${mn:04x}"),
             Return                  => write!(f, "RET"),
@@ -246,7 +257,9 @@ impl Instruction {
 
 
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
+            "11_0cc_010" => ins(JumpCond(Condition::parse(c), fetch_imm16()), 3, 12 /* +4 if branch taken*/),
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
+            "00_1cc_000" => ins(JumpCondRelative(Condition::parse(c), fetch_imm8() as i8), 2, 8 /* +4 if branch taken */ ),
 
             "11_001_101" => ins(Call(fetch_imm16()), 3, 24),
             "11_001_001" => ins(Return, 1, 16),
@@ -340,5 +353,13 @@ mod tests {
         assert_eq!("XOR  A,$05", d(&[0xee, 0x05]));
         assert_eq!("OR   A,$05", d(&[0xf6, 0x05]));
         assert_eq!("CP   A,$05", d(&[0xfe, 0x05]));
+        assert_eq!("JP   NZ,$1234", d(&[0xc2, 0x34, 0x12]));
+        assert_eq!("JP   Z,$1234", d(&[0xca, 0x34, 0x12]));
+        assert_eq!("JP   NC,$1234", d(&[0xd2, 0x34, 0x12]));
+        assert_eq!("JP   C,$1234", d(&[0xda, 0x34, 0x12]));
+        assert_eq!("JR   NZ,$12", d(&[0x20, 0x12]));
+        assert_eq!("JR   Z,$12",  d(&[0x28, 0x12]));
+        assert_eq!("JR   NC,$12", d(&[0x30, 0x12]));
+        assert_eq!("JR   C,$12",  d(&[0x38, 0x12]));
     }
 }
