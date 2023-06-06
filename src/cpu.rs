@@ -58,15 +58,16 @@ fn add_relative(addr: u16, offset: i8) -> u16 {
     ((addr as i32) + (offset as i32)) as u16
 }
 
-fn condition_met(condition: Condition, flags: Flags) -> bool {
-    match condition {
-        Condition::NZ => { !flags.contains(Flags::Z) },
-        Condition::Z => { flags.contains(Flags::Z) },
-        Condition::NC => { !flags.contains(Flags::C) },
-        Condition::C => { flags.contains(Flags::C) },
+impl Condition {
+    fn matches(&self, flags: Flags) -> bool {
+        match self {
+            Condition::NZ => { !flags.contains(Flags::Z) },
+            Condition::Z => { flags.contains(Flags::Z) },
+            Condition::NC => { !flags.contains(Flags::C) },
+            Condition::C => { flags.contains(Flags::C) },
+        }
     }
 }
-
 
 impl Cpu {
     pub fn new() -> Self {
@@ -408,8 +409,8 @@ impl Cpu {
                 Opcode::Jump(addr) => {
                     self.pc = addr;
                 }
-                Opcode::JumpCond(cond, addr) => {
-                    if condition_met(cond, self.flags) {
+                Opcode::JumpCond(condition, addr) => {
+                    if condition.matches(self.flags) {
                         self.pc = addr;
                         self.n_cycles += 4;
                     } 
@@ -417,8 +418,8 @@ impl Cpu {
                 Opcode::JumpRelative(rel) => {
                     self.pc = add_relative(self.pc, rel);
                 }
-                Opcode::JumpCondRelative(cond, rel) => { 
-                    if condition_met(cond, self.flags) {
+                Opcode::JumpCondRelative(condition, rel) => { 
+                    if condition.matches(self.flags) {
                         self.pc = add_relative(self.pc, rel);
                         self.n_cycles += 4;
                     }
