@@ -80,6 +80,8 @@ pub enum Opcode {
 
     Jump(u16),
 
+    Call(u16),
+
     DisableInterrupts,
     EnableInterrupts,
 
@@ -123,6 +125,8 @@ impl fmt::Display for Instruction {
             Dec(r)                  => write!(f, "DEC  {r}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
+
+            Call(mn)                => write!(f, "CALL ${mn:04x}"),
 
             DisableInterrupts       => write!(f, "DI"),
             EnableInterrupts        => write!(f, "EI"),
@@ -201,6 +205,8 @@ impl Instruction {
 
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
 
+            "11_001_101" => ins(Call(fetch_imm16()), 3, 24),
+
             "11_110_011" => ins(DisableInterrupts, 1, 4),
             "11_111_011" => ins(EnableInterrupts, 1, 4),
 
@@ -267,5 +273,6 @@ mod tests {
         assert_eq!("JP   $1234", d(&[0xc3, 0x34, 0x12]));
         assert_eq!("DI", d(&[0xf3]));
         assert_eq!("EI", d(&[0xfb]));
+        assert_eq!("CALL $5544", d(&[0xcd, 0x44, 0x55]));
     }
 }

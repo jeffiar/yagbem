@@ -207,6 +207,17 @@ impl Cpu {
         }
     }
 
+    fn push_onto_stack(&mut self, val: u16) {
+        self.sp = self.sp.wrapping_sub(2);
+        self.mem_write16(self.sp, val);
+    }
+
+    fn pop_from_stack(&mut self) -> u16 {
+        let val = self.mem_read16(self.sp);
+        self.sp = self.sp.wrapping_add(2);
+        val
+    }
+
     pub fn run(&mut self) {
         self.run_with_callback(|_| {});
     }
@@ -297,13 +308,11 @@ impl Cpu {
                 }
                 Opcode::Push(reg_pair) => {
                     let val = self.reg16_read(reg_pair);
-                    self.sp = self.sp.wrapping_sub(2);
-                    self.mem_write16(self.sp, val);
+                    self.push_onto_stack(val);
                 }
                 Opcode::Pop(reg_pair) => {
-                    let val = self.mem_read16(self.sp);
+                    let val = self.pop_from_stack();
                     self.reg16_write(reg_pair, val);
-                    self.sp = self.sp.wrapping_add(2);
                 }
 
                 Opcode::Add(reg) => { self.add_and_set_flags(self.a, self.reg8_read(reg), OpReg8::A, true); }
@@ -322,6 +331,11 @@ impl Cpu {
 
                 Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
                 Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
+
+                Opcode::Call(addr) => {
+                    self.push_onto_stack(self.pc);
+                    self.pc = addr;
+                }
 
                 Opcode::NotImplemented(_opcode) => { panic!("Unimplemented opcode")}
             }
@@ -752,10 +766,23 @@ mod tests {
     }
 
     #[test]
-    fn jp_unconditional() {
+    fn jump_unconditional() {
         let mut cpu = Cpu::new_flat();
         cpu.bus.mem_write(0x1234, 0x76);
         cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]);
         assert_eq!(cpu.pc, 0x1235);
+    }
+    
+    #[test]
+    fn call_unconditional() {
+        let mut cpu = Cpu::new_flat();
+        cpu.pc = 0x8000;
+        cpu.sp = 0xfffe;
+        cpu.bus.mem_write(0x1234, 0x76);
+        cpu.run_instructions_and_halt(&[0xcd, 0x34, 0x12]);
+        assert_eq!(cpu.mem_read(0xfffd), 0x80);
+        assert_eq!(cpu.mem_read(0xfffc), 0x03);
+        assert_eq!(cpu.sp, 0xfffc);
+        assert_eq!(cpu.pc, 0x1235); // +1 for the HALT
     }
 }
