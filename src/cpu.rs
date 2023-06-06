@@ -305,12 +305,12 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            eprintln!("{:04x}: {:02x} {} {} {}", 
-                      self.pc,
-                      self.mem_read(self.pc),
-                      if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-                      if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-                      instr);
+            // eprintln!("{:04x}: {:02x} {} {} {}", 
+            //           self.pc,
+            //           self.mem_read(self.pc),
+            //           if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+            //           if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+            //           instr);
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -442,10 +442,36 @@ impl Cpu {
                     self.set_flags_from_rot_shift(new_val);
                     // eprintln!("After:  {new_val:08b}, {:?}", self.flags);
                 }
-                Opcode::ShiftLeftArithmetic(r)  => { break; }
-                Opcode::ShiftRightArithmetic(r) => { break; }
-                Opcode::SwapNibbles(r)          => { break; }
-                Opcode::ShiftRightLogical(r)    => { break; }
+                Opcode::ShiftLeftArithmetic(reg) => {
+                    let val = self.reg8_read(reg);
+                    let new_val = val.wrapping_shl(1);
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x80) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
+                Opcode::ShiftRightArithmetic(reg) => {
+                    let val = self.reg8_read(reg);
+                    let new_val = (val as i8).wrapping_shr(1) as u8;
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x01) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
+                Opcode::SwapNibbles(reg) => {
+                    let val = self.reg8_read(reg);
+                    let lo = val & 0x0f;
+                    let hi = val & 0xf0;
+                    let new_val = lo << 4 | hi >> 4;
+                    self.reg8_write(reg, new_val);
+                    self.flags.remove(Flags::C | Flags::H | Flags::N);
+                    self.flags.set(Flags::Z, new_val == 0);
+                }
+                Opcode::ShiftRightLogical(reg) => {
+                    let val = self.reg8_read(reg);
+                    let new_val = val.wrapping_shr(1);
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x01) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
                 Opcode::Bit(b, r)               => { break; }
                 Opcode::Reset(b, r)             => { break; }
                 Opcode::Set(b, r)               => { break; }
@@ -1478,25 +1504,35 @@ mod tests {
         test_bit_ops([0xcb, 0x1e], OpReg8::HLIndirect, 0x01, Flags::C,       0x80, Flags::C);
     }
 
-//     #[test]
-//     fn sla() {
-//         todo!();
-//     }
+    #[test]
+    fn sla() {
+        test_bit_ops([0xcb, 0x22], OpReg8::D,          0x80, Flags::empty(), 0x00, Flags::C | Flags::Z);
+        test_bit_ops([0xcb, 0x26], OpReg8::HLIndirect, 0xff, Flags::empty(), 0xfe, Flags::C);
+        test_bit_ops([0xcb, 0x26], OpReg8::HLIndirect, 0x01, Flags::C      , 0x02, Flags::empty());
+    }
 
-//     #[test]
-//     fn sra() {
-//         todo!();
-//     }
+    #[test]
+    fn sra() {
+        test_bit_ops([0xcb, 0x2f], OpReg8::A,          0x8a, Flags::empty(), 0xc5, Flags::empty());
+        test_bit_ops([0xcb, 0x2e], OpReg8::HLIndirect, 0x01, Flags::empty(), 0x00, Flags::C | Flags::Z);
+        test_bit_ops([0xcb, 0x2e], OpReg8::HLIndirect, 0x02, Flags::C      , 0x01, Flags::empty());
+        test_bit_ops([0xcb, 0x2e], OpReg8::HLIndirect, 0xf0, Flags::C      , 0xf8, Flags::empty());
+    }
 
-//     #[test]
-//     fn swap() {
-//         todo!();
-//     }
+    #[test]
+    fn swap() {
+        test_bit_ops([0xcb, 0x32], OpReg8::D,          0x80, Flags::empty(), 0x08, Flags::empty());
+        test_bit_ops([0xcb, 0x36], OpReg8::HLIndirect, 0x5f, Flags::empty(), 0xf5, Flags::empty());
+        test_bit_ops([0xcb, 0x36], OpReg8::HLIndirect, 0x01, Flags::C      , 0x10, Flags::empty());
+        test_bit_ops([0xcb, 0x36], OpReg8::HLIndirect, 0x00, Flags::C      , 0x00, Flags::Z);
+    }
 
-//     #[test]
-//     fn srl() {
-//         todo!();
-//     }
+    #[test]
+    fn srl() {
+        test_bit_ops([0xcb, 0x3f], OpReg8::A,          0x01, Flags::empty(), 0x00, Flags::C | Flags::Z);
+        test_bit_ops([0xcb, 0x3e], OpReg8::HLIndirect, 0xff, Flags::empty(), 0x7f, Flags::C);
+        test_bit_ops([0xcb, 0x3e], OpReg8::HLIndirect, 0xf0, Flags::C      , 0x78, Flags::empty());
+    }
 
 //     #[test]
 //     fn bit() {
