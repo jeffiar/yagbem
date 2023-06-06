@@ -1,3 +1,10 @@
+use std::io::{stderr, Write};
+
+mod register {
+    pub const SB: u16 = 0xff01;
+    pub const SC: u16 = 0xff02;
+}
+
 pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
     fn mem_write(&mut self, addr: u16, val: u8);
@@ -27,7 +34,17 @@ impl Mem for Bus {
         self.mem[addr as usize] 
     }
     fn mem_write(&mut self, addr: u16, val: u8) { 
-        self.mem[addr as usize] = val;
+        match addr {
+            register::SC => { 
+                // Print the serial transfer byte as ASCII character to stderr
+                if (val & 0xf0) != 0 {
+                    eprint!("{}", self.mem_read(register::SB) as char);
+                    stderr().flush().expect("Failed to write to stderr");
+                }
+            }
+            _ => {}
+        }
+        self.mem[addr as usize] = val; 
     }
 
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8] {

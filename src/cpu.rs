@@ -292,9 +292,6 @@ impl Cpu {
     pub fn run_with_callback<F>(&mut self, mut callback: F) 
     where F: FnMut(&mut Cpu)
     {
-        let mut num_consecutive_nop = 0;
-        let mut nop = false;
-
         loop {
             callback(self);
 
@@ -302,28 +299,12 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            match instr.opcode {
-                Opcode::NoOp => { 
-                    if nop {
-                        num_consecutive_nop += 1;
-                    } else {
-                        nop = true;
-                        num_consecutive_nop = 0;
-                    }
-                }
-                _ => { nop = false;}
-            };
-
-            if num_consecutive_nop < 3 {
-                eprintln!("{:04x}: {:02x} {} {} {}", 
-                          self.pc,
-                          self.mem_read(self.pc),
-                          if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-                          if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-                          instr);
-            } else if num_consecutive_nop == 3 {
-                eprintln!("...");
-            }
+            // eprintln!("{:04x}: {:02x} {} {} {}", 
+            //           self.pc,
+            //           self.mem_read(self.pc),
+            //           if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+            //           if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+            //           instr);
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -452,7 +433,7 @@ impl Cpu {
                 }
                 Opcode::Return => { self.pc = self.pop_from_stack(); }
 
-                Opcode::NotImplemented(_opcode) => { panic!("Unimplemented opcode")}
+                Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
             }
 
         }

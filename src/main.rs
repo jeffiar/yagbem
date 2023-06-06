@@ -74,10 +74,12 @@ fn color_num_to_rgb(color_num: u8) -> Color {
     }
 }
 
-fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32)  {
+/// Returns true if this tile has changed and needs to be redrawn. // TODO cache this
+fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32) -> bool {
     assert_eq!(tile_data.len(), 16);
     // eprintln!("x = {x}, y = {y}");
 
+    let mut changed = false;
     let mut out_idx: usize = (((x * out_height) + y) * 3) as usize;
     for row in 0..8 {
         let layer0 = tile_data[2*row];
@@ -94,13 +96,23 @@ fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: 
             }
 
             let (r,g,b) = color_num_to_rgb(color_num).rgb();
-            out_rgb[out_idx] = r;
-            out_rgb[out_idx + 1] = g;
-            out_rgb[out_idx + 2] = b;
+            if out_rgb[out_idx] != r {
+                changed = true;
+                out_rgb[out_idx] = r;
+            }
+            if out_rgb[out_idx + 1] != g {
+                changed = true;
+                out_rgb[out_idx + 1] = g;
+            }
+            if out_rgb[out_idx + 2] != b {
+                changed = true;
+                out_rgb[out_idx + 2] = b;
+            }
             out_idx += 3;
         }
         out_idx += 3 * (out_width - 8) as usize;
     }
+    changed
 }
 
 fn main() {
@@ -140,27 +152,38 @@ fn main() {
     let mut mem_disp_start = 0x0000;
 
     cpu.run_with_callback(move |cpu| {
+        if cpu.n_instrs % 1000 != 0 {
+            return;
+        }
+        eprint!(".");
+
         handle_user_input(&mut event_pump, &mut mem_disp_start);
         // render_tile_map(&cpu, &mut texture, &mut canvas);
         let mut tile_map_rgb = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
 
+        let mut update = false;
         let mut addr = mem_disp_start;
         for x_tile in 0..32 {
             for y_tile in 0..32 {
-                paint_tile(&cpu.mem_read_range(addr, addr + 16), 
-                           &mut tile_map_rgb, 
-                           SCREEN_FULL_X,
-                           SCREEN_FULL_Y,
-                           x_tile * 8,
-                           y_tile * 8);
+                let changed = paint_tile(&cpu.mem_read_range(addr, addr + 16), 
+                                       &mut tile_map_rgb, 
+                                       SCREEN_FULL_X,
+                                       SCREEN_FULL_Y,
+                                       x_tile * 8,
+                                       y_tile * 8);
+                if changed {
+                    update = true;
+                }
                 addr += 16;
             }
         }
 
-        texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
-        canvas.copy(&texture, None, None).unwrap();
-        canvas.present();
+        if update {
+            texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
+            canvas.copy(&texture, None, None).unwrap();
+            canvas.present();
+        }
 
-        ::std::thread::sleep(std::time::Duration::from_millis(20));
+        // ::std::thread::sleep(std::time::Duration::from_millis(20));
     });
 }
