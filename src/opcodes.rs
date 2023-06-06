@@ -78,6 +78,8 @@ pub enum Opcode {
     Inc(OpReg8),
     Dec(OpReg8),
 
+    Jump(u16),
+
     NotImplemented(u8),
 }
 
@@ -117,7 +119,9 @@ impl fmt::Display for Instruction {
             Inc(r)                  => write!(f, "INC  {r}"),
             Dec(r)                  => write!(f, "DEC  {r}"),
 
-            NotImplemented(o)     => write!(f, "unimplemented opcode 0x{o:02x}"),
+            Jump(mn)                => write!(f, "JP   ${mn:04x}"),
+
+            NotImplemented(o)       => write!(f, "unimplemented opcode 0x{o:02x}"),
         }
     }
 }
@@ -189,6 +193,8 @@ impl Instruction {
             "11_010_110" => ins(SubImm(fetch_imm8()), 2, 8),
             "11_011_110" => ins(SbcImm(fetch_imm8()), 2, 8),
 
+            "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
+
             // _ => panic!("opcode 0x{:02x} not implemented", code[0]),
             "aaaaaaaa" => Self::new(Opcode::NotImplemented(a), 1, 4),
         }
@@ -247,5 +253,6 @@ mod tests {
         assert_eq!("LD   ($6655),SP", d(&[0x08, 0x55, 0x66]));
         assert_eq!("LD   HL,SP+$30", d(&[0xf8, 0x30]));
         assert_eq!("LD   HL,SP+$f0", d(&[0xf8, 0xf0]));
+        assert_eq!("JP   $1234", d(&[0xc3, 0x34, 0x12]));
     }
 }

@@ -211,7 +211,7 @@ impl Cpu {
     where F: FnMut(&mut Cpu)
     {
         loop {
-            // callback(self);
+            callback(self);
 
             let instr = Instruction::decode(self.mem_read(self.pc),
                                             || {self.mem_read(self.pc + 1)},
@@ -312,6 +312,8 @@ impl Cpu {
 
                 Opcode::Inc(reg) => { self.add_and_set_flags(self.reg8_read(reg), 1, reg, false); }
                 Opcode::Dec(reg) => { self.sub_and_set_flags(self.reg8_read(reg), 1, reg, false); }
+
+                Opcode::Jump(addr) => { self.pc = addr; }
 
                 Opcode::NotImplemented(_opcode) => { continue; }
             }
@@ -739,5 +741,13 @@ mod tests {
         assert_eq!(cpu.sp, 0xfff8);
         assert_eq!(cpu.reg16_read(OpReg16::HL), 0xffe8);
         assert_eq!(cpu.flags, Flags::empty());
+    }
+
+    #[test]
+    fn jp_unconditional() {
+        let mut cpu = Cpu::new_flat();
+        cpu.bus.mem_write(0x1234, 0x76);
+        cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]);
+        assert_eq!(cpu.pc, 0x1235);
     }
 }
