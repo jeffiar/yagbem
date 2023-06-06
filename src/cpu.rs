@@ -285,6 +285,11 @@ impl Cpu {
         self.reg16_write(reg_pair, val.wrapping_sub(1));
     }
 
+    fn set_flags_from_rot_shift(&mut self, val: u8) {
+        self.flags.remove(Flags::H | Flags::N);
+        self.flags.set(Flags::Z, val == 0);
+    }
+
     pub fn run(&mut self) {
         self.run_with_callback(|_| {});
     }
@@ -300,12 +305,12 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            // eprintln!("{:04x}: {:02x} {} {} {}", 
-            //           self.pc,
-            //           self.mem_read(self.pc),
-            //           if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-            //           if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-            //           instr);
+            eprintln!("{:04x}: {:02x} {} {} {}", 
+                      self.pc,
+                      self.mem_read(self.pc),
+                      if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+                      if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+                      instr);
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -402,9 +407,48 @@ impl Cpu {
 
                 Opcode::Inc(reg) => { self.add_instr(self.reg8_read(reg), 1, reg, false); }
                 Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
-
                 Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
                 Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
+
+                Opcode::RotateLeftCarry(reg) => {
+                    let val = self.reg8_read(reg);
+                    let new_val = val.rotate_left(1);
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0xf0) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
+                Opcode::RotateRightCarry(reg) => {
+                    let val = self.reg8_read(reg);
+                    let new_val = val.rotate_right(1);
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x01) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
+                Opcode::RotateLeft(reg) => {
+                    let val = self.reg8_read(reg);
+                    let mut new_val = val.wrapping_shl(1);
+                    new_val |= self.flags.contains(Flags::C) as u8; // set bit 0 depending on old C flag
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x80) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                }
+                Opcode::RotateRight(reg) => {
+                    let val = self.reg8_read(reg);
+                    // eprintln!("Before: {val:08b}, {:?}", self.flags);
+                    let mut new_val = val.wrapping_shr(1);
+                    new_val |= (self.flags.contains(Flags::C) as u8) << 7; // set bit 0 depending on old C flag
+                    self.reg8_write(reg, new_val);
+                    self.flags.set(Flags::C, (val & 0x01) != 0);
+                    self.set_flags_from_rot_shift(new_val);
+                    // eprintln!("After:  {new_val:08b}, {:?}", self.flags);
+                }
+                Opcode::ShiftLeftArithmetic(r)  => { break; }
+                Opcode::ShiftRightArithmetic(r) => { break; }
+                Opcode::SwapNibbles(r)          => { break; }
+                Opcode::ShiftRightLogical(r)    => { break; }
+                Opcode::Bit(b, r)               => { break; }
+                Opcode::Reset(b, r)             => { break; }
+                Opcode::Set(b, r)               => { break; }
 
                 Opcode::Jump(addr) => {
                     self.pc = addr;
@@ -1395,4 +1439,78 @@ mod tests {
         assert_eq!(cpu.h, 0x8a);
         assert_eq!(cpu.l, 0x5b);
     }
+
+    fn test_bit_ops(opcode: [u8; 2], reg: OpReg8, start_val: u8, start_flags: Flags, end_val: u8, end_flags: Flags) {
+        let mut cpu = Cpu::new_flat();
+        cpu.reg8_write(reg, start_val);
+        cpu.flags = start_flags;
+        cpu.run_instructions_and_halt(&opcode);
+        assert_eq!(cpu.reg8_read(reg), end_val);
+        assert_eq!(cpu.flags, end_flags);
+    }
+
+    #[test]
+    fn rlc() {
+        test_bit_ops([0xcb, 0x00], OpReg8::B,          0x85, Flags::empty(), 0x0b, Flags::C);
+        test_bit_ops([0xcb, 0x06], OpReg8::HLIndirect, 0x00, Flags::empty(), 0x00, Flags::Z);
+    }
+
+    #[test]
+    fn rrc() {
+        test_bit_ops([0xcb, 0x09], OpReg8::C,          0x01, Flags::empty(), 0x80, Flags::C);
+        test_bit_ops([0xcb, 0x09], OpReg8::C,          0x80, Flags::empty(), 0x40, Flags::empty());
+        test_bit_ops([0xcb, 0x0e], OpReg8::HLIndirect, 0x00, Flags::empty(), 0x00, Flags::Z);
+    }
+
+
+    #[test]
+    fn rl() {
+        test_bit_ops([0xcb, 0x15], OpReg8::L,          0x80, Flags::empty(), 0x00, Flags::C | Flags::Z);
+        test_bit_ops([0xcb, 0x16], OpReg8::HLIndirect, 0x11, Flags::empty(), 0x22, Flags::empty());
+        test_bit_ops([0xcb, 0x16], OpReg8::HLIndirect, 0x00, Flags::C      , 0x01, Flags::empty());
+    }
+
+    #[test]
+    fn rr() {
+        test_bit_ops([0xcb, 0x19], OpReg8::C,          0x01, Flags::empty(), 0x00, Flags::C | Flags::Z);
+        test_bit_ops([0xcb, 0x1e], OpReg8::HLIndirect, 0x8a, Flags::empty(), 0x45, Flags::empty());
+        test_bit_ops([0xcb, 0x1e], OpReg8::HLIndirect, 0x00, Flags::C,       0x80, Flags::empty());
+        test_bit_ops([0xcb, 0x1e], OpReg8::HLIndirect, 0x01, Flags::C,       0x80, Flags::C);
+    }
+
+//     #[test]
+//     fn sla() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn sra() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn swap() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn srl() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn bit() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn reset() {
+//         todo!();
+//     }
+
+//     #[test]
+//     fn set() {
+//         todo!();
+//     }
+
 }

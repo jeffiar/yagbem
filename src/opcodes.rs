@@ -92,9 +92,20 @@ pub enum Opcode {
 
     Inc(OpReg8),
     Dec(OpReg8),
-
     IncPair(OpReg16),
     DecPair(OpReg16),
+
+    RotateLeftCarry(OpReg8),
+    RotateRightCarry(OpReg8),
+    RotateLeft(OpReg8),
+    RotateRight(OpReg8),
+    ShiftLeftArithmetic(OpReg8),
+    ShiftRightArithmetic(OpReg8),
+    SwapNibbles(OpReg8),
+    ShiftRightLogical(OpReg8),
+    Bit(u8, OpReg8),
+    Reset(u8, OpReg8),
+    Set(u8, OpReg8),
 
     Jump(u16),
     JumpCond(Condition, u16),
@@ -157,9 +168,20 @@ impl fmt::Display for Instruction {
 
             Inc(r)                  => write!(f, "INC  {r}"),
             Dec(r)                  => write!(f, "DEC  {r}"),
-
             IncPair(dd)             => write!(f, "INC  {dd}"),
             DecPair(dd)             => write!(f, "DEC  {dd}"),
+
+            RotateLeftCarry(r)      => write!(f, "RLC  {r}"),
+            RotateRightCarry(r)     => write!(f, "RRC  {r}"),
+            RotateLeft(r)           => write!(f, "RL   {r}"),
+            RotateRight(r)          => write!(f, "RR   {r}"),
+            ShiftLeftArithmetic(r)  => write!(f, "SLA  {r}"),
+            ShiftRightArithmetic(r) => write!(f, "SRA  {r}"),
+            SwapNibbles(r)          => write!(f, "SWAP {r}"),
+            ShiftRightLogical(r)    => write!(f, "SRL  {r}"),
+            Bit(b, r)               => write!(f, "BIT  {b},{r}"),
+            Reset(b, r)             => write!(f, "RES  {b},{r}"),
+            Set(b, r)               => write!(f, "SET  {b},{r}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
             JumpCond(c,mn)          => write!(f, "JP   {c},${mn:04x}"),
@@ -204,6 +226,8 @@ impl Instruction {
             "00_000_000" => ins(NoOp, 1, 4),
             "01_110_110" => ins(Halt, 1, 4),
             "00_010_000" => ins(Stop, 1, 4),
+
+            "11_001_011" => Self::decode_cb_opcode(fetch_imm8()),
 
             "00_110_110" => ins(Load8(OpReg8::HLIndirect, fetch_imm8()), 2, 12),
             "00_rrr_110" => ins(Load8(OpReg8::parse(r), fetch_imm8()), 2, 8),
@@ -263,7 +287,6 @@ impl Instruction {
             "00_dd0_011" => ins(IncPair(OpReg16::parse(d)), 1, 8),
             "00_dd1_011" => ins(DecPair(OpReg16::parse(d)), 1, 8),
 
-
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
             "11_0cc_010" => ins(JumpCond(Condition::parse(c), fetch_imm16()), 3, 12 /* +4 if branch taken*/),
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
@@ -283,6 +306,36 @@ impl Instruction {
 
             // _ => panic!("opcode 0x{:02x} not implemented", code[0]),
             "aaaaaaaa" => Self::new(Opcode::NotImplemented(a), 1, 4),
+        }
+    }
+
+    
+    #[bitmatch]
+    pub fn decode_cb_opcode(code: u8) -> Instruction {
+        use Opcode::*;
+        let mut opcode = Opcode::NoOp;
+
+        #[bitmatch]
+        match code {
+            "00_000_rrr" => { opcode = RotateLeftCarry(OpReg8::parse(r));      }
+            "00_001_rrr" => { opcode = RotateRightCarry(OpReg8::parse(r));     }
+            "00_010_rrr" => { opcode = RotateLeft(OpReg8::parse(r));           }
+            "00_011_rrr" => { opcode = RotateRight(OpReg8::parse(r));          }
+            "00_100_rrr" => { opcode = ShiftLeftArithmetic(OpReg8::parse(r));  }
+            "00_101_rrr" => { opcode = ShiftRightArithmetic(OpReg8::parse(r)); }
+            "00_110_rrr" => { opcode = SwapNibbles(OpReg8::parse(r));          }
+            "00_111_rrr" => { opcode = ShiftRightLogical(OpReg8::parse(r));    }
+            "01_bbb_rrr" => { opcode = Bit(b, OpReg8::parse(r));               }
+            "10_bbb_rrr" => { opcode = Reset(b, OpReg8::parse(r));             }
+            "11_bbb_rrr" => { opcode = Set(b, OpReg8::parse(r));               }
+        };
+
+        let cycles = if (code & 0b00_000_111) == 0b110 { 16 } else { 8 };
+
+        Instruction {
+            opcode: opcode,
+            length: 2,
+            cycles: cycles,
         }
     }
 }
@@ -383,5 +436,23 @@ mod tests {
         assert_eq!("CALL Z,$1234",  d(&[0xcc, 0x34, 0x12]));
         assert_eq!("CALL NC,$1234", d(&[0xd4, 0x34, 0x12]));
         assert_eq!("CALL C,$1234",  d(&[0xdc, 0x34, 0x12]));
+        assert_eq!("RLC  B",  d(&[0xcb, 0x00]));
+        assert_eq!("RL   C",  d(&[0xcb, 0x11]));
+        assert_eq!("SLA  D",  d(&[0xcb, 0x22]));
+        assert_eq!("SWAP E",  d(&[0xcb, 0x33]));
+        assert_eq!("BIT  0,H",     d(&[0xcb, 0x44]));
+        assert_eq!("BIT  2,L",     d(&[0xcb, 0x55]));
+        assert_eq!("BIT  4,(HL)",  d(&[0xcb, 0x66]));
+        assert_eq!("BIT  6,A",     d(&[0xcb, 0x77]));
+        assert_eq!("BIT  7,B",     d(&[0xcb, 0x78]));
+        assert_eq!("BIT  5,C",     d(&[0xcb, 0x69]));
+        assert_eq!("BIT  3,D",     d(&[0xcb, 0x5a]));
+        assert_eq!("BIT  1,E",     d(&[0xcb, 0x4b]));
+        assert_eq!("SRL  H",       d(&[0xcb, 0x3c]));
+        assert_eq!("SRA  L",     d(&[0xcb, 0x2d]));
+        assert_eq!("RR   (HL)",  d(&[0xcb, 0x1e]));
+        assert_eq!("RRC  A",     d(&[0xcb, 0x0f]));
+        assert_eq!("RES  0,H",     d(&[0xcb, 0x84]));
+        assert_eq!("SET  0,H",     d(&[0xcb, 0xc4]));
     }
 }
