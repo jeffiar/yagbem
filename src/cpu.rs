@@ -164,7 +164,7 @@ impl Cpu {
         }
     }
 
-    fn add_and_set_flags(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
+    fn add_instr(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
         let sum16 = (op1 as u16).wrapping_add(op2 as u16);
         let sum8  = op1.wrapping_add(op2);
         let sum4  = (op1 & 0x0f).wrapping_add(op2 & 0x0f);
@@ -177,7 +177,8 @@ impl Cpu {
             self.flags.set(Flags::C, (sum16 & 0x100) != 0);
         }
     }
-    fn sub_and_set_flags(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
+
+    fn sub_instr(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
         let diff = op1.wrapping_sub(op2);
         self.reg8_write(destination, diff);
 
@@ -189,30 +190,62 @@ impl Cpu {
         }
     }
 
-    fn adc_and_set_flags(&mut self, val: u8) {
+    fn adc_instr(&mut self, val: u8) {
         if !self.flags.contains(Flags::C) {
-            self.add_and_set_flags(self.a, val, OpReg8::A, true);
+            self.add_instr(self.a, val, OpReg8::A, true);
         } else {
             // I think the logic is to set the H and C flags if a carry happens 
             // in either of the two additions (op1 + op2 + 1).
-            self.add_and_set_flags(self.a, 1, OpReg8::A, true);
+            self.add_instr(self.a, 1, OpReg8::A, true);
             let flags = self.flags.clone();
-            self.add_and_set_flags(self.a, val, OpReg8::A, true);
+            self.add_instr(self.a, val, OpReg8::A, true);
             self.flags |= flags;
         }
     }
 
-    fn sbc_and_set_flags(&mut self, val: u8) {
+    fn sbc_instr(&mut self, val: u8) {
         if !self.flags.contains(Flags::C) {
-            self.sub_and_set_flags(self.a, val, OpReg8::A, true);
+            self.sub_instr(self.a, val, OpReg8::A, true);
         } else {
             // I think the logic is to set the H and C flags if a carry happens 
             // in either of the two subitions (op1 + op2 + 1).
-            self.sub_and_set_flags(self.a, 1, OpReg8::A, true);
+            self.sub_instr(self.a, 1, OpReg8::A, true);
             let flags = self.flags.clone();
-            self.sub_and_set_flags(self.a, val, OpReg8::A, true);
+            self.sub_instr(self.a, val, OpReg8::A, true);
             self.flags |= flags;
         }
+    }
+
+    fn and_instr(&mut self, val: u8) {
+        self.a &= val;
+        self.flags.set(Flags::Z, self.a == 0);
+        self.flags.set(Flags::N, false);
+        self.flags.set(Flags::H, true);
+        self.flags.set(Flags::C, false);
+    }
+
+    fn xor_instr(&mut self, val: u8) {
+        self.a ^= val;
+        self.flags.set(Flags::Z, self.a == 0);
+        self.flags.set(Flags::N | Flags::H | Flags::C, false);
+    }
+
+    fn or_instr(&mut self, val: u8) {
+        self.a |= val;
+        self.flags.set(Flags::Z, self.a == 0);
+        self.flags.set(Flags::N | Flags::H | Flags::C, false);
+    }
+
+    fn cp_instr(&mut self, val: u8) {
+        // This is identical to SUB except the results are thrown away.
+        let op1 = self.a;
+        let op2 = val;
+        let diff = op1.wrapping_sub(op2);
+
+        self.flags.set(Flags::Z, diff == 0);
+        self.flags.set(Flags::N, true);
+        self.flags.set(Flags::H, (op1 & 0x0f) < (op2 & 0x0f));
+        self.flags.set(Flags::C, op1 < op2);
     }
 
     fn push_onto_stack(&mut self, val: u16) {
@@ -308,13 +341,13 @@ impl Cpu {
                     // add lower 8 bits as an unsigned int
                     let lo = (self.sp & 0xff) as u8;
                     let hi = (self.sp >> 8) as u8;
-                    self.add_and_set_flags(lo, rel as u8, OpReg8::L, true);
+                    self.add_instr(lo, rel as u8, OpReg8::L, true);
 
                     // carry or borrow into the upper 8 bits depending on result
                     if (rel > 0) & self.flags.contains(Flags::C) {
-                        self.add_and_set_flags(hi, 1, OpReg8::H, true);
+                        self.add_instr(hi, 1, OpReg8::H, true);
                     } else if (rel < 0) & !self.flags.contains(Flags::C) {
-                        self.sub_and_set_flags(hi, 1, OpReg8::H, true);
+                        self.sub_instr(hi, 1, OpReg8::H, true);
                     } else {
                         self.h = hi;
                         self.flags.remove(Flags::C | Flags::H);
@@ -334,17 +367,26 @@ impl Cpu {
                     self.reg16_write(reg_pair, val);
                 }
 
-                Opcode::Add(reg) => { self.add_and_set_flags(self.a, self.reg8_read(reg), OpReg8::A, true); }
-                Opcode::Adc(reg) => { self.adc_and_set_flags(self.reg8_read(reg)); }
-                Opcode::Sub(reg) => { self.sub_and_set_flags(self.a, self.reg8_read(reg), OpReg8::A, true); }
-                Opcode::Sbc(reg) => { self.sbc_and_set_flags(self.reg8_read(reg)); }
-                Opcode::AddImm(val) => { self.add_and_set_flags(self.a, val, OpReg8::A, true); }
-                Opcode::AdcImm(val) => { self.adc_and_set_flags(val); }
-                Opcode::SubImm(val) => { self.sub_and_set_flags(self.a, val, OpReg8::A, true); }
-                Opcode::SbcImm(val) => { self.sbc_and_set_flags(val); }
+                Opcode::Add(reg) => { self.add_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
+                Opcode::Adc(reg) => { self.adc_instr(self.reg8_read(reg)); }
+                Opcode::Sub(reg) => { self.sub_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
+                Opcode::Sbc(reg) => { self.sbc_instr(self.reg8_read(reg)); }
+                Opcode::And(reg) => { self.and_instr(self.reg8_read(reg)); }
+                Opcode::Xor(reg) => { self.xor_instr(self.reg8_read(reg)); }
+                Opcode::Or(reg)  => { self.or_instr(self.reg8_read(reg)); }
+                Opcode::Cp(reg)  => { self.cp_instr(self.reg8_read(reg)); }
 
-                Opcode::Inc(reg) => { self.add_and_set_flags(self.reg8_read(reg), 1, reg, false); }
-                Opcode::Dec(reg) => { self.sub_and_set_flags(self.reg8_read(reg), 1, reg, false); }
+                Opcode::AddImm(val) => { self.add_instr(self.a, val, OpReg8::A, true); }
+                Opcode::AdcImm(val) => { self.adc_instr(val); }
+                Opcode::SubImm(val) => { self.sub_instr(self.a, val, OpReg8::A, true); }
+                Opcode::SbcImm(val) => { self.sbc_instr(val); }
+                Opcode::AndImm(val) => { self.and_instr(val); }
+                Opcode::XorImm(val) => { self.xor_instr(val); }
+                Opcode::OrImm(val) => { self.or_instr(val); }
+                Opcode::CpImm(val) => { self.cp_instr(val); }
+
+                Opcode::Inc(reg) => { self.add_instr(self.reg8_read(reg), 1, reg, false); }
+                Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
 
                 Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
 
@@ -580,6 +622,74 @@ mod tests {
             test_math(0xd6, ROI::Immediate, operand_1, operand_2, result, flags);
         }
     }
+
+    #[test]
+    fn and() {
+        let tests = vec![
+            (0x00, 0xff, 0x00, Flags::H | Flags::Z),
+            (0b00001111, 0b01010101, 0b00000101, Flags::H),
+            (0xf0, 0xff, 0xf0, Flags::H),
+        ];
+        for (operand_1, operand_2, result, flags) in tests {
+            test_math(0xa0, ROI::Reg(OpReg8::B), operand_1, operand_2, result, flags);
+            test_math(0xa6, ROI::Reg(OpReg8::HLIndirect), operand_1, operand_2, result, flags);
+            test_math(0xe6, ROI::Immediate, operand_1, operand_2, result, flags);
+        }
+    }
+
+    #[test]
+    fn xor() {
+        let tests = vec![
+            (0x00, 0xf0, 0xf0, Flags::empty()),
+            (0xff, 0xf0, 0x0f, Flags::empty()),
+            (0b01010101, 0b11110000, 0b10100101, Flags::empty()),
+            (0xff, 0xff, 0x00, Flags::Z),
+        ];
+        for (operand_1, operand_2, result, flags) in tests {
+            test_math(0xaa, ROI::Reg(OpReg8::D), operand_1, operand_2, result, flags);
+            test_math(0xad, ROI::Reg(OpReg8::L), operand_1, operand_2, result, flags);
+            test_math(0xee, ROI::Immediate, operand_1, operand_2, result, flags);
+        }
+    }
+
+    #[test]
+    fn or() {
+        let tests = vec![
+            (0x00, 0xf0, 0xf0, Flags::empty()),
+            (0xff, 0xf0, 0xff, Flags::empty()),
+            (0b01010101, 0b11110000, 0b11110101, Flags::empty()),
+            (0xff, 0xff, 0xff, Flags::empty()),
+            (0x00, 0x00, 0x00, Flags::Z),
+        ];
+        for (operand_1, operand_2, result, flags) in tests {
+            test_math(0xb1, ROI::Reg(OpReg8::C), operand_1, operand_2, result, flags);
+            test_math(0xb3, ROI::Reg(OpReg8::E), operand_1, operand_2, result, flags);
+            test_math(0xf6, ROI::Immediate, operand_1, operand_2, result, flags);
+        }
+    }
+
+
+    #[test]
+    fn cp() {
+        let tests = vec![
+            // These are same as the SUB tests except the A register should not be changed.
+            (0x09, 0x03, 0x09, Flags::N),
+            (0xfe, 0xfe, 0xfe, Flags::N | Flags::Z),
+            (0x00, 0x01, 0x00, Flags::N | Flags::H | Flags::C),
+            (0x00, 0x70, 0x00, Flags::N | Flags::C),
+            (0x10, 0x01, 0x10, Flags::N | Flags::H),
+            (0x3e, 0x3e, 0x3e, Flags::N | Flags::Z), // from nintendo manual
+            (0x3e, 0x0f, 0x3e, Flags::N | Flags::H), // from nintendo manual
+            (0x3e, 0x40, 0x3e, Flags::N | Flags::C), // from nintendo manual
+        ];
+        for (operand_1, operand_2, result, flags) in tests {
+            test_math(0xbd, ROI::Reg(OpReg8::L), operand_1, operand_2, result, flags);
+            test_math(0xbe, ROI::Reg(OpReg8::HLIndirect), operand_1, operand_2, result, flags);
+            test_math(0xfe, ROI::Immediate, operand_1, operand_2, result, flags);
+        }
+    }
+
+
 
     #[test]
     fn adc_simple_carry_only() {

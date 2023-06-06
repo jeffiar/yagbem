@@ -69,11 +69,19 @@ pub enum Opcode {
     Adc(OpReg8),
     Sub(OpReg8),
     Sbc(OpReg8),
+    And(OpReg8),
+    Xor(OpReg8),
+    Or(OpReg8),
+    Cp(OpReg8),
 
     AddImm(u8),
     AdcImm(u8),
     SubImm(u8),
     SbcImm(u8),
+    AndImm(u8),
+    XorImm(u8),
+    OrImm(u8),
+    CpImm(u8),
 
     Inc(OpReg8),
     Dec(OpReg8),
@@ -120,11 +128,19 @@ impl fmt::Display for Instruction {
             Adc(r)                  => write!(f, "ADC  A,{r}"),
             Sub(r)                  => write!(f, "SUB  A,{r}"),
             Sbc(r)                  => write!(f, "SBC  A,{r}"),
+            And(r)                  => write!(f, "AND  A,{r}"),
+            Xor(r)                  => write!(f, "XOR  A,{r}"),
+            Or(r)                   => write!(f, "OR   A,{r}"),
+            Cp(r)                   => write!(f, "CP   A,{r}"),
 
             AddImm(n)               => write!(f, "ADD  A,${n:02x}"),
             AdcImm(n)               => write!(f, "ADC  A,${n:02x}"),
             SubImm(n)               => write!(f, "SUB  A,${n:02x}"),
             SbcImm(n)               => write!(f, "SBC  A,${n:02x}"),
+            AndImm(n)               => write!(f, "AND  A,${n:02x}"),
+            XorImm(n)               => write!(f, "XOR  A,${n:02x}"),
+            OrImm(n)                => write!(f, "OR   A,${n:02x}"),
+            CpImm(n)                => write!(f, "CP   A,${n:02x}"),
 
             Inc(r)                  => write!(f, "INC  {r}"),
             Dec(r)                  => write!(f, "DEC  {r}"),
@@ -208,6 +224,19 @@ impl Instruction {
             "10_001_rrr" => ins(Adc(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
             "10_010_rrr" => ins(Sub(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
             "10_011_rrr" => ins(Sbc(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
+            "10_100_rrr" => ins(And(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
+            "10_101_rrr" => ins(Xor(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
+            "10_110_rrr" => ins(Or(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
+            "10_111_rrr" => ins(Cp(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
+
+            "11_000_110" => ins(AddImm(fetch_imm8()), 2, 8),
+            "11_001_110" => ins(AdcImm(fetch_imm8()), 2, 8),
+            "11_010_110" => ins(SubImm(fetch_imm8()), 2, 8),
+            "11_011_110" => ins(SbcImm(fetch_imm8()), 2, 8),
+            "11_100_110" => ins(AndImm(fetch_imm8()), 2, 8),
+            "11_101_110" => ins(XorImm(fetch_imm8()), 2, 8),
+            "11_110_110" => ins(OrImm(fetch_imm8()), 2, 8),
+            "11_111_110" => ins(CpImm(fetch_imm8()), 2, 8),
 
             "00_rrr_100" => ins(Inc(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
             "00_rrr_101" => ins(Dec(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
@@ -215,10 +244,6 @@ impl Instruction {
             "00_dd0_011" => ins(IncPair(OpReg16::parse(d)), 1, 8),
             "00_dd1_011" => ins(DecPair(OpReg16::parse(d)), 1, 8),
 
-            "11_000_110" => ins(AddImm(fetch_imm8()), 2, 8),
-            "11_001_110" => ins(AdcImm(fetch_imm8()), 2, 8),
-            "11_010_110" => ins(SubImm(fetch_imm8()), 2, 8),
-            "11_011_110" => ins(SbcImm(fetch_imm8()), 2, 8),
 
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
@@ -307,5 +332,13 @@ mod tests {
         assert_eq!("LD   A,(HL-)", d(&[0x3a]));
         assert_eq!("LD   (HL+),A", d(&[0x22]));
         assert_eq!("LD   (HL-),A", d(&[0x32]));
+        assert_eq!("AND  A,D", d(&[0xa2]));
+        assert_eq!("XOR  A,H", d(&[0xac]));
+        assert_eq!("OR   A,E", d(&[0xb3]));
+        assert_eq!("CP   A,C", d(&[0xb9]));
+        assert_eq!("AND  A,$05", d(&[0xe6, 0x05]));
+        assert_eq!("XOR  A,$05", d(&[0xee, 0x05]));
+        assert_eq!("OR   A,$05", d(&[0xf6, 0x05]));
+        assert_eq!("CP   A,$05", d(&[0xfe, 0x05]));
     }
 }
