@@ -79,6 +79,7 @@ pub enum Opcode {
     Dec(OpReg8),
 
     Jump(u16),
+    JumpRelative(i8),
 
     Call(u16),
 
@@ -125,6 +126,7 @@ impl fmt::Display for Instruction {
             Dec(r)                  => write!(f, "DEC  {r}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
+            JumpRelative(e)         => write!(f, "JR   ${e:02x}"),
 
             Call(mn)                => write!(f, "CALL ${mn:04x}"),
 
@@ -204,6 +206,7 @@ impl Instruction {
             "11_011_110" => ins(SbcImm(fetch_imm8()), 2, 8),
 
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
+            "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
 
             "11_001_101" => ins(Call(fetch_imm16()), 3, 24),
 
@@ -274,5 +277,6 @@ mod tests {
         assert_eq!("DI", d(&[0xf3]));
         assert_eq!("EI", d(&[0xfb]));
         assert_eq!("CALL $5544", d(&[0xcd, 0x44, 0x55]));
+        assert_eq!("JR   $f0", d(&[0x18, 0xf0]));
     }
 }

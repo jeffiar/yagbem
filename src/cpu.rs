@@ -328,6 +328,7 @@ impl Cpu {
                 Opcode::Dec(reg) => { self.sub_and_set_flags(self.reg8_read(reg), 1, reg, false); }
 
                 Opcode::Jump(addr) => { self.pc = addr; }
+                Opcode::JumpRelative(rel) => { self.pc = ((self.pc as i32) + (rel as i32)) as u16; }
 
                 Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
                 Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
@@ -771,6 +772,33 @@ mod tests {
         cpu.bus.mem_write(0x1234, 0x76);
         cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]);
         assert_eq!(cpu.pc, 0x1235);
+    }
+
+    #[test]
+    fn jump_relative_backwards() {
+        let mut cpu = Cpu::new_flat();
+        cpu.pc = 0x2000;
+        cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
+        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        //                              2000  2001  2002
+        cpu.run_instructions_and_halt(&[0x18, -18i8 as u8, 0x04]); // JR -$12 \ INC B
+        assert_eq!(cpu.pc, 0x1ff2);
+        assert_eq!(cpu.a, 1);
+        assert_eq!(cpu.b, 0);
+    }
+    
+    fn jump_relative_forwards() {
+        let mut cpu = Cpu::new_flat();
+        cpu.pc = 0x2000;
+        cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
+        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        //                              // JR +$02  INC B   INC D  INC H
+        cpu.run_instructions_and_halt(&[0x18, 2, 0x04, 0x14,  0x24 ]);
+        assert_eq!(cpu.pc, 0x2006);
+        assert_eq!(cpu.a, 0);
+        assert_eq!(cpu.b, 0);
+        assert_eq!(cpu.d, 0);
+        assert_eq!(cpu.h, 1);
     }
     
     #[test]
