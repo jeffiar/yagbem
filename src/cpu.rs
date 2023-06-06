@@ -424,6 +424,9 @@ impl Cpu {
                         self.n_cycles += 4;
                     }
                 }
+                Opcode::JumpHL => {
+                    self.pc = self.reg16_read(OpReg16::HL);
+                }
 
                 Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
                 Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
@@ -432,7 +435,26 @@ impl Cpu {
                     self.push_onto_stack(self.pc);
                     self.pc = addr;
                 }
-                Opcode::Return => { self.pc = self.pop_from_stack(); }
+                Opcode::CallCond(condition, addr) => {
+                    if condition.matches(self.flags) {
+                        self.push_onto_stack(self.pc);
+                        self.pc = addr;
+                        self.n_cycles += 12;
+                    }
+                }
+                Opcode::Return => {
+                    self.pc = self.pop_from_stack(); 
+                }
+                Opcode::ReturnFromInterrupt => {
+                    self.pc = self.pop_from_stack();
+                    self.interrupt_master_enable = true;
+                }
+                Opcode::ReturnCond(condition) => {
+                    if condition.matches(self.flags) {
+                        self.pc = self.pop_from_stack();
+                        self.n_cycles += 12;
+                    }
+                }
 
                 Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
             }
@@ -934,7 +956,17 @@ mod tests {
     fn jump_unconditional() {
         let mut cpu = Cpu::new_flat();
         cpu.bus.mem_write(0x1234, 0x76);
-        cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]);
+        cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]); // JP $1234
+        assert_eq!(cpu.pc, 0x1235);
+    }
+
+    #[test]
+    fn jump_hl() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x12;
+        cpu.l = 0x34;
+        cpu.bus.mem_write(0x1234, 0x76);
+        cpu.run_instructions_and_halt(&[0xe9]); // JP (HL)
         assert_eq!(cpu.pc, 0x1235);
     }
 
@@ -1064,6 +1096,90 @@ mod tests {
         assert_eq!(cpu.pc, 0x1235); // +1 for the HALT
     }
 
+    fn test_call_conditional(code: [u8; 3], starting_flags: Flags, expected_branch: bool) {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = starting_flags;
+        cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
+        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x2000, code[0]); //  | Call instruction here
+        cpu.bus.mem_write(0x2001, code[1]); //  | (pad with NOP to make 3 bytes)
+        cpu.bus.mem_write(0x2002, code[2]); //  |
+        cpu.bus.mem_write(0x2003, 0x04); // INC B
+        cpu.bus.mem_write(0x2004, 0x76); // HALT
+                                         //
+        cpu.sp = 0xfffe;
+        cpu.pc = 0x2000;
+        cpu.run();
+
+        if expected_branch {
+            assert_eq!(cpu.a, 1);
+            assert_eq!(cpu.b, 0);
+            assert_eq!(cpu.pc, 0x1ff2);
+            assert_eq!(cpu.mem_read(0xfffd), 0x20);
+            assert_eq!(cpu.mem_read(0xfffc), 0x03);
+            assert_eq!(cpu.sp, 0xfffc);
+        } else {
+            assert_eq!(cpu.a, 0);
+            assert_eq!(cpu.b, 1);
+            assert_eq!(cpu.pc, 0x2005);
+            assert_eq!(cpu.mem_read(0xfffd), 0x00);
+            assert_eq!(cpu.mem_read(0xfffc), 0x00);
+            assert_eq!(cpu.sp, 0xfffe);
+        }
+    }
+
+
+    #[test]
+    fn call_conditional() {
+        let tests = [
+            // NZ condition
+            ([0xc4, 0xf0, 0x1f], Flags::empty()     , true),
+            ([0xc4, 0xf0, 0x1f], Flags::Z           , false),
+            ([0xc4, 0xf0, 0x1f], Flags::C           , true),
+            ([0xc4, 0xf0, 0x1f], Flags::Z | Flags::C, false),
+            // Z condition
+            ([0xcc, 0xf0, 0x1f], Flags::empty()     , false),
+            ([0xcc, 0xf0, 0x1f], Flags::Z           , true),
+            ([0xcc, 0xf0, 0x1f], Flags::C           , false),
+            ([0xcc, 0xf0, 0x1f], Flags::Z | Flags::C, true),
+            // NC condition
+            ([0xd4, 0xf0, 0x1f], Flags::empty()     , true),
+            ([0xd4, 0xf0, 0x1f], Flags::Z           , true),
+            ([0xd4, 0xf0, 0x1f], Flags::C           , false),
+            ([0xd4, 0xf0, 0x1f], Flags::Z | Flags::C, false),
+            // C condition
+            ([0xdc, 0xf0, 0x1f], Flags::empty()     , false),
+            ([0xdc, 0xf0, 0x1f], Flags::Z           , false),
+            ([0xdc, 0xf0, 0x1f], Flags::C           , true),
+            ([0xdc, 0xf0, 0x1f], Flags::Z | Flags::C, true),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_call_conditional(code, starting_flags, should_branch);
+        }
+    }
+
+    #[test]
+    fn call_unconditional_2() {
+        let tests = [
+            // all of these should take the branch regardless of flags
+            ([0xcd, 0xf0, 0x1f], Flags::empty()     , true),
+            ([0xcd, 0xf0, 0x1f], Flags::Z           , true),
+            ([0xcd, 0xf0, 0x1f], Flags::C           , true),
+            ([0xcd, 0xf0, 0x1f], Flags::Z | Flags::C, true),
+            // And these should not branch
+            ([0x00, 0x00, 0x00], Flags::empty()     , false),
+            ([0x00, 0x00, 0x00], Flags::Z           , false),
+            ([0x00, 0x00, 0x00], Flags::C           , false),
+            ([0x00, 0x00, 0x00], Flags::Z | Flags::C, false),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_call_conditional(code, starting_flags, should_branch);
+        }
+    }
+
+
     #[test]
     fn return_unconditional() {
         let mut cpu = Cpu::new_flat();
@@ -1077,6 +1193,113 @@ mod tests {
         assert_eq!(cpu.a, 1);
         assert_eq!(cpu.b, 1);
         assert_eq!(cpu.d, 0);
+    }
+
+    #[test]
+    fn return_from_interrupt() {
+        let mut cpu = Cpu::new_flat();
+        // set return address to $8000
+        cpu.sp = 0xfffc;
+        cpu.mem_write(0xfffd, 0x80);
+        cpu.mem_write(0xfffc, 0x00);
+
+        cpu.pc = 0x1000;
+        cpu.interrupt_master_enable = false;
+        cpu.bus.mem_write(0x1000, 0xd9); // RETI
+        cpu.bus.mem_write(0x1001, 0x04);     // INC B
+        cpu.bus.mem_write(0x1002, 0x76);     // HALT
+                                             // ...
+        cpu.bus.mem_write(0x8000, 0x3c);     // INC A
+        cpu.bus.mem_write(0x8001, 0x76);     // HALT
+                                             //
+        cpu.run();
+        assert_eq!(cpu.a, 1);
+        assert_eq!(cpu.b, 0);
+        assert_eq!(cpu.pc, 0x8002);
+        assert_eq!(cpu.sp, 0xfffe);
+        assert_eq!(cpu.interrupt_master_enable, true);
+    }
+
+
+    fn test_return_conditional(ret_code: [u8; 1], starting_flags: Flags, expected_branch: bool) {
+        let mut cpu = Cpu::new_flat();
+
+        // set return address to $8000
+        cpu.sp = 0xfffc;
+        cpu.mem_write(0xfffd, 0x80);
+        cpu.mem_write(0xfffc, 0x00);
+
+        cpu.pc = 0x1000;
+        cpu.bus.mem_write(0x1000, ret_code[0]); // RET cc
+        cpu.bus.mem_write(0x1001, 0x04);     // INC B
+        cpu.bus.mem_write(0x1002, 0x76);     // HALT
+                                             // ...
+        cpu.bus.mem_write(0x8000, 0x3c);     // INC A
+        cpu.bus.mem_write(0x8001, 0x76);     // HALT
+                                             //
+        cpu.flags = starting_flags;
+        cpu.run();
+        if expected_branch {
+            assert_eq!(cpu.a, 1);
+            assert_eq!(cpu.b, 0);
+            assert_eq!(cpu.pc, 0x8002);
+            assert_eq!(cpu.sp, 0xfffe);
+        } else {
+            assert_eq!(cpu.a, 0);
+            assert_eq!(cpu.b, 1);
+            assert_eq!(cpu.pc, 0x1003);
+            assert_eq!(cpu.sp, 0xfffc);
+        }
+    }
+
+    #[test]
+    fn return_conditional() {
+        let tests = [
+            // NZ condition
+            ([0xc0], Flags::empty()     , true),
+            ([0xc0], Flags::Z           , false),
+            ([0xc0], Flags::C           , true),
+            ([0xc0], Flags::Z | Flags::C, false),
+            // Z condition
+            ([0xc8], Flags::empty()     , false),
+            ([0xc8], Flags::Z           , true),
+            ([0xc8], Flags::C           , false),
+            ([0xc8], Flags::Z | Flags::C, true),
+            // NC condition
+            ([0xd0], Flags::empty()     , true),
+            ([0xd0], Flags::Z           , true),
+            ([0xd0], Flags::C           , false),
+            ([0xd0], Flags::Z | Flags::C, false),
+            // C condition
+            ([0xd8], Flags::empty()     , false),
+            ([0xd8], Flags::Z           , false),
+            ([0xd8], Flags::C           , true),
+            ([0xd8], Flags::Z | Flags::C, true),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_return_conditional(code, starting_flags, should_branch);
+        }
+    }
+
+    #[test]
+    fn return_unconditional_2() {
+        let tests = [
+            // all of these should take the branch regardless of flags
+            ([0xc9], Flags::empty()     , true),
+            ([0xc9], Flags::Z           , true),
+            ([0xc9], Flags::C           , true),
+            ([0xc9], Flags::Z | Flags::C, true),
+            // And these should not branch
+            ([0x00], Flags::empty()     , false),
+            ([0x00], Flags::Z           , false),
+            ([0x00], Flags::C           , false),
+            ([0x00], Flags::Z | Flags::C, false),
+        ];
+
+        for (code, starting_flags, should_branch) in tests {
+            test_return_conditional(code, starting_flags, should_branch);
+        }
     }
 
     #[test]

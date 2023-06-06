@@ -100,9 +100,13 @@ pub enum Opcode {
     JumpCond(Condition, u16),
     JumpRelative(i8),
     JumpCondRelative(Condition, i8),
+    JumpHL,
 
     Call(u16),
+    CallCond(Condition, u16),
     Return,
+    ReturnFromInterrupt,
+    ReturnCond(Condition),
 
     DisableInterrupts,
     EnableInterrupts,
@@ -161,9 +165,13 @@ impl fmt::Display for Instruction {
             JumpCond(c,mn)          => write!(f, "JP   {c},${mn:04x}"),
             JumpRelative(e)         => write!(f, "JR   ${e:02x}"),
             JumpCondRelative(c,e)   => write!(f, "JR   {c},${e:02x}"),
+            JumpHL                  => write!(f, "JP   (HL)"),
 
             Call(mn)                => write!(f, "CALL ${mn:04x}"),
+            CallCond(c, mn)         => write!(f, "CALL {c},${mn:04x}"),
             Return                  => write!(f, "RET"),
+            ReturnFromInterrupt     => write!(f, "RETI"),
+            ReturnCond(c)           => write!(f, "RET  {c}"),
 
             DisableInterrupts       => write!(f, "DI"),
             EnableInterrupts        => write!(f, "EI"),
@@ -260,9 +268,13 @@ impl Instruction {
             "11_0cc_010" => ins(JumpCond(Condition::parse(c), fetch_imm16()), 3, 12 /* +4 if branch taken*/),
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
             "00_1cc_000" => ins(JumpCondRelative(Condition::parse(c), fetch_imm8() as i8), 2, 8 /* +4 if branch taken */ ),
+            "11_101_001" => ins(JumpHL, 1, 4),
 
             "11_001_101" => ins(Call(fetch_imm16()), 3, 24),
+            "11_0cc_100" => ins(CallCond(Condition::parse(c), fetch_imm16()), 3, 12 /* +12 if branch taken */),
             "11_001_001" => ins(Return, 1, 16),
+            "11_011_001" => ins(ReturnFromInterrupt, 1, 16),
+            "11_0cc_000" => ins(ReturnCond(Condition::parse(c)), 1, 8 /* +12 if branch taken */),
 
             "11_110_011" => ins(DisableInterrupts, 1, 4),
             "11_111_011" => ins(EnableInterrupts, 1, 4),
@@ -354,12 +366,22 @@ mod tests {
         assert_eq!("OR   A,$05", d(&[0xf6, 0x05]));
         assert_eq!("CP   A,$05", d(&[0xfe, 0x05]));
         assert_eq!("JP   NZ,$1234", d(&[0xc2, 0x34, 0x12]));
-        assert_eq!("JP   Z,$1234", d(&[0xca, 0x34, 0x12]));
+        assert_eq!("JP   Z,$1234",  d(&[0xca, 0x34, 0x12]));
         assert_eq!("JP   NC,$1234", d(&[0xd2, 0x34, 0x12]));
-        assert_eq!("JP   C,$1234", d(&[0xda, 0x34, 0x12]));
+        assert_eq!("JP   C,$1234",  d(&[0xda, 0x34, 0x12]));
         assert_eq!("JR   NZ,$12", d(&[0x20, 0x12]));
         assert_eq!("JR   Z,$12",  d(&[0x28, 0x12]));
         assert_eq!("JR   NC,$12", d(&[0x30, 0x12]));
         assert_eq!("JR   C,$12",  d(&[0x38, 0x12]));
+        assert_eq!("JP   (HL)",  d(&[0xe9]));
+        assert_eq!("RETI",  d(&[0xd9]));
+        assert_eq!("RET  NZ",  d(&[0xc0]));
+        assert_eq!("RET  Z",   d(&[0xc8]));
+        assert_eq!("RET  NC",  d(&[0xd0]));
+        assert_eq!("RET  C",   d(&[0xd8]));
+        assert_eq!("CALL NZ,$1234", d(&[0xc4, 0x34, 0x12]));
+        assert_eq!("CALL Z,$1234",  d(&[0xcc, 0x34, 0x12]));
+        assert_eq!("CALL NC,$1234", d(&[0xd4, 0x34, 0x12]));
+        assert_eq!("CALL C,$1234",  d(&[0xdc, 0x34, 0x12]));
     }
 }
