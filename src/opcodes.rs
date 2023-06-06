@@ -331,6 +331,7 @@ impl Instruction {
         };
 
         let cycles = if (code & 0b00_000_111) == 0b110 { 16 } else { 8 };
+        // TODO apparently BIT _,(HL) has a different cycle count of 12 but sources are conflicting
 
         Instruction {
             opcode: opcode,

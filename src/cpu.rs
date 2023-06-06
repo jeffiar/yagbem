@@ -180,6 +180,23 @@ impl Cpu {
         }
     }
 
+    // fn reg8_write_bit(&mut self, reg: OpReg8, bit: u8, val: bool) {
+    //     // A little ugly, but I in case I want to keep a separate case for HLIndirect
+    //     match reg {
+    //         OpReg8::A => { if val {self.a |= (1 << bit)} else {self.a &= !(1 << bit)} }
+    //         OpReg8::B => { if val {self.b |= (1 << bit)} else {self.b &= !(1 << bit)} }
+    //         OpReg8::C => { if val {self.c |= (1 << bit)} else {self.c &= !(1 << bit)} }
+    //         OpReg8::D => { if val {self.d |= (1 << bit)} else {self.d &= !(1 << bit)} }
+    //         OpReg8::E => { if val {self.e |= (1 << bit)} else {self.e &= !(1 << bit)} }
+    //         OpReg8::H => { if val {self.h |= (1 << bit)} else {self.h &= !(1 << bit)} }
+    //         OpReg8::L => { if val {self.l |= (1 << bit)} else {self.l &= !(1 << bit)} }
+    //         OpReg8::HLIndirect => {
+    //             let hl = (self.h as u16) << 8 | self.l as u16;
+    //             self.bus.mem_write_bit(hl, bit, val);
+    //         }
+    //     }
+    // }
+
     fn add_instr(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
         let sum16 = (op1 as u16).wrapping_add(op2 as u16);
         let sum8  = op1.wrapping_add(op2);
@@ -305,12 +322,12 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            // eprintln!("{:04x}: {:02x} {} {} {}", 
-            //           self.pc,
-            //           self.mem_read(self.pc),
-            //           if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-            //           if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-            //           instr);
+            eprintln!("{:04x}: {:02x} {} {} {}", 
+                      self.pc,
+                      self.mem_read(self.pc),
+                      if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+                      if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+                      instr);
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -472,9 +489,22 @@ impl Cpu {
                     self.flags.set(Flags::C, (val & 0x01) != 0);
                     self.set_flags_from_rot_shift(new_val);
                 }
-                Opcode::Bit(b, r)               => { break; }
-                Opcode::Reset(b, r)             => { break; }
-                Opcode::Set(b, r)               => { break; }
+                Opcode::Bit(bit, reg) => {
+                    let is_bit_set = (self.reg8_read(reg) & (1 << bit)) != 0;
+                    self.flags.set(Flags::Z, !is_bit_set);
+                    self.flags.set(Flags::N, false);
+                    self.flags.set(Flags::H, true);
+                }
+                Opcode::Reset(bit, reg) => {
+                    let mut val = self.reg8_read(reg);
+                    val &= !(1 << bit); // rust made an interesting choice for the bitwise NOT
+                    self.reg8_write(reg, val);
+                }
+                Opcode::Set(bit, reg)   => {
+                    let mut val = self.reg8_read(reg);
+                    val |= 1 << bit;
+                    self.reg8_write(reg, val);
+                }
 
                 Opcode::Jump(addr) => {
                     self.pc = addr;
@@ -1534,19 +1564,44 @@ mod tests {
         test_bit_ops([0xcb, 0x3e], OpReg8::HLIndirect, 0xf0, Flags::C      , 0x78, Flags::empty());
     }
 
-//     #[test]
-//     fn bit() {
-//         todo!();
-//     }
+    #[test]
+    fn bitop_bit() {
+        // BIT 7, A
+        test_bit_ops([0xcb, 0x7f], OpReg8::A,          0x80, Flags::empty(), 0x80, Flags::H);
+        // BIT 4, L
+        test_bit_ops([0xcb, 0x65], OpReg8::L,          0xef, Flags::empty(), 0xef, Flags::H | Flags::Z);
+        // BIT 0, (HL)
+        test_bit_ops([0xcb, 0x46], OpReg8::HLIndirect, 0xfe, Flags::C      , 0xfe, Flags::C | Flags::H | Flags::Z);
+        // BIT 1, (HL)
+        test_bit_ops([0xcb, 0x4e], OpReg8::HLIndirect, 0xfe, Flags::C      , 0xfe, Flags::C | Flags::H);
+    }
 
-//     #[test]
-//     fn reset() {
-//         todo!();
-//     }
+    #[test]
+    fn bitop_reset() {
+        // RES 7, A
+        test_bit_ops([0xcb, 0xbf], OpReg8::A,          0x80, Flags::empty(), 0x00, Flags::empty());
+        // RES 6, A
+        test_bit_ops([0xcb, 0xb7], OpReg8::A,          0x80, Flags::empty(), 0x80, Flags::empty());
+        // RES 1, L
+        test_bit_ops([0xcb, 0x8d], OpReg8::L,          0x3b, Flags::H      , 0x39, Flags::H);
+        // RES 3, (HL)
+        test_bit_ops([0xcb, 0x9e], OpReg8::HLIndirect, 0xff, Flags::H      , 0xf7, Flags::H);
+        // RES 3, (HL)
+        test_bit_ops([0xcb, 0x9e], OpReg8::HLIndirect, 0xf0, Flags::H      , 0xf0, Flags::H);
+    }
 
-//     #[test]
-//     fn set() {
-//         todo!();
-//     }
+    #[test]
+    fn bitop_set() {
+        // SET 7, A
+        test_bit_ops([0xcb, 0xff], OpReg8::A,          0x00, Flags::empty(), 0x80, Flags::empty());
+        // SET 6, A
+        test_bit_ops([0xcb, 0xf7], OpReg8::A,          0x00, Flags::empty(), 0x40, Flags::empty());
+        // SET 1, L
+        test_bit_ops([0xcb, 0xcd], OpReg8::L,          0x39, Flags::H      , 0x3b, Flags::H);
+        // SET 3, (HL)
+        test_bit_ops([0xcb, 0xde], OpReg8::HLIndirect, 0xf7, Flags::H      , 0xff, Flags::H);
+        // SET 3, (HL)
+        test_bit_ops([0xcb, 0xde], OpReg8::HLIndirect, 0xff, Flags::H      , 0xff, Flags::H);
+    }
 
 }

@@ -65,6 +65,10 @@ impl Bus {
         let start = start as usize;
         self.mem[start..(start + program.len())].copy_from_slice(program);
     }
+
+    // pub fn mem_write_bit(&mut self, addr: u16, bit: u8, val: bool) {
+        // Can do matching for registers here if desired
+    // }
 }
 
 
