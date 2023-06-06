@@ -78,6 +78,9 @@ pub enum Opcode {
     Inc(OpReg8),
     Dec(OpReg8),
 
+    IncPair(OpReg16),
+    DecPair(OpReg16),
+
     Jump(u16),
     JumpRelative(i8),
 
@@ -106,7 +109,7 @@ impl fmt::Display for Instruction {
             LoadAFromIndC           => write!(f, "LD   A,($ff00+C)"),
             StoreAToIndC            => write!(f, "LD   ($ff00+C),A"),
 
-            Load16(rr, mn)          => write!(f, "LD   {rr},${mn:04x}"),
+            Load16(dd, mn)          => write!(f, "LD   {dd},${mn:04x}"),
             LoadSPHL                => write!(f, "LD   SP,HL"),
             LoadHLSPRelative(e)     => write!(f, "LD   HL,SP+${e:02x}"),
             StoreSP(mn)             => write!(f, "LD   (${mn:04x}),SP"),
@@ -125,6 +128,9 @@ impl fmt::Display for Instruction {
 
             Inc(r)                  => write!(f, "INC  {r}"),
             Dec(r)                  => write!(f, "DEC  {r}"),
+
+            IncPair(dd)             => write!(f, "INC  {dd}"),
+            DecPair(dd)             => write!(f, "DEC  {dd}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
             JumpRelative(e)         => write!(f, "JR   ${e:02x}"),
@@ -201,6 +207,9 @@ impl Instruction {
 
             "00_rrr_100" => ins(Inc(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
             "00_rrr_101" => ins(Dec(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
+
+            "00_dd0_011" => ins(IncPair(OpReg16::parse(d)), 1, 8),
+            "00_dd1_011" => ins(DecPair(OpReg16::parse(d)), 1, 8),
 
             "11_000_110" => ins(AddImm(fetch_imm8()), 2, 8),
             "11_001_110" => ins(AdcImm(fetch_imm8()), 2, 8),
@@ -282,5 +291,13 @@ mod tests {
         assert_eq!("CALL $5544", d(&[0xcd, 0x44, 0x55]));
         assert_eq!("JR   $f0", d(&[0x18, 0xf0]));
         assert_eq!("RET", d(&[0xc9]));
+        assert_eq!("INC  BC", d(&[0x03]));
+        assert_eq!("INC  DE", d(&[0x13]));
+        assert_eq!("INC  HL", d(&[0x23]));
+        assert_eq!("INC  SP", d(&[0x33]));
+        assert_eq!("DEC  BC", d(&[0x0B]));
+        assert_eq!("DEC  DE", d(&[0x1B]));
+        assert_eq!("DEC  HL", d(&[0x2B]));
+        assert_eq!("DEC  SP", d(&[0x3B]));
     }
 }

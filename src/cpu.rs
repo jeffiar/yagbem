@@ -327,6 +327,15 @@ impl Cpu {
                 Opcode::Inc(reg) => { self.add_and_set_flags(self.reg8_read(reg), 1, reg, false); }
                 Opcode::Dec(reg) => { self.sub_and_set_flags(self.reg8_read(reg), 1, reg, false); }
 
+                Opcode::IncPair(reg_pair) => {
+                    let val = self.reg16_read(reg_pair);
+                    self.reg16_write(reg_pair, val.wrapping_add(1));
+                }
+                Opcode::DecPair(reg_pair) => {
+                    let val = self.reg16_read(reg_pair);
+                    self.reg16_write(reg_pair, val.wrapping_sub(1));
+                }
+
                 Opcode::Jump(addr) => { self.pc = addr; }
                 Opcode::JumpRelative(rel) => { self.pc = ((self.pc as i32) + (rel as i32)) as u16; }
 
@@ -829,5 +838,51 @@ mod tests {
         assert_eq!(cpu.a, 1);
         assert_eq!(cpu.b, 1);
         assert_eq!(cpu.d, 0);
+    }
+
+    #[test]
+    fn inc16() {
+        let mut cpu = Cpu::new_flat();
+        cpu.b = 0x43;
+        cpu.c = 0xff;
+        cpu.run_instructions_and_halt(&[0x03]); //INC BC
+        assert_eq!(cpu.b, 0x44);
+        assert_eq!(cpu.c, 0x00);
+        assert_eq!(cpu.flags, Flags::empty());
+
+        cpu.run_instructions_and_halt(&[0x03]); //INC BC
+        assert_eq!(cpu.b, 0x44);
+        assert_eq!(cpu.c, 0x01);
+        assert_eq!(cpu.flags, Flags::empty());
+
+        cpu.sp = 0xffff;
+        cpu.run_instructions_and_halt(&[0x33]); //INC SP
+        assert_eq!(cpu.sp, 0x0000);
+        assert_eq!(cpu.flags, Flags::empty());
+    }
+
+    #[test]
+    fn dec16() {
+        let mut cpu = Cpu::new_flat();
+        cpu.b = 0x43;
+        cpu.c = 0xff;
+        cpu.run_instructions_and_halt(&[0x0b]); //DEC BC
+        assert_eq!(cpu.b, 0x43);
+        assert_eq!(cpu.c, 0xfe);
+        assert_eq!(cpu.flags, Flags::empty());
+
+        cpu.d = 0x2a;
+        cpu.e = 0x00;
+        cpu.run_instructions_and_halt(&[0x1b]); //DEC DE
+        assert_eq!(cpu.d, 0x29);
+        assert_eq!(cpu.e, 0xff);
+        assert_eq!(cpu.flags, Flags::empty());
+
+        cpu.h = 0x00;
+        cpu.l = 0x00;
+        cpu.run_instructions_and_halt(&[0x2b]); // or not to be... DEC HL
+        assert_eq!(cpu.h, 0xff);
+        assert_eq!(cpu.l, 0xff);
+        assert_eq!(cpu.flags, Flags::empty());
     }
 }
