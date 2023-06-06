@@ -489,6 +489,32 @@ impl Cpu {
                     self.flags.set(Flags::C, (val & 0x01) != 0);
                     self.set_flags_from_rot_shift(new_val);
                 }
+                Opcode::RLCA => {
+                    self.a = self.a.rotate_left(1);
+                    self.flags.set(Flags::C, (self.a & 0x01) != 0);
+                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
+                }
+                Opcode::RRCA => {
+                    self.a = self.a.rotate_right(1);
+                    self.flags.set(Flags::C, (self.a & 0x0f) != 0);
+                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
+                }
+                Opcode::RLA => {
+                    let val = self.a;
+                    let mut new_val = val.wrapping_shl(1);
+                    new_val |= self.flags.contains(Flags::C) as u8;
+                    self.a = new_val;
+                    self.flags.set(Flags::C, (val & 0x80) != 0);
+                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
+                }
+                Opcode::RRA => {
+                    let val = self.a;
+                    let mut new_val = val.wrapping_shr(1);
+                    new_val |= (self.flags.contains(Flags::C) as u8) << 7; 
+                    self.a = new_val;
+                    self.flags.set(Flags::C, (val & 0x01) != 0);
+                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
+                }
                 Opcode::Bit(bit, reg) => {
                     let is_bit_set = (self.reg8_read(reg) & (1 << bit)) != 0;
                     self.flags.set(Flags::Z, !is_bit_set);
@@ -1604,4 +1630,31 @@ mod tests {
         test_bit_ops([0xcb, 0xde], OpReg8::HLIndirect, 0xff, Flags::H      , 0xff, Flags::H);
     }
 
+    #[test]
+    fn rlca() {
+        // nintendo manual might be incorrect on the first one
+        test_bit_ops([0x07, 0x00], OpReg8::A, 0x85, Flags::empty(), 0x0b, Flags::C);
+        test_bit_ops([0x07, 0x00], OpReg8::A, 0x00, Flags::empty(), 0x00, Flags::empty());
+        test_bit_ops([0x07, 0x00], OpReg8::A, 0x00, Flags::empty(), 0x00, Flags::empty());
+    }
+
+    #[test]
+    fn rla() {
+        test_bit_ops([0x17, 0x00], OpReg8::A, 0x95, Flags::C, 0x2b, Flags::C);
+        test_bit_ops([0x17, 0x00], OpReg8::A, 0x01, Flags::C, 0x03, Flags::empty());
+        test_bit_ops([0x17, 0x00], OpReg8::A, 0x00, Flags::H, 0x00, Flags::empty());
+    }
+
+    #[test]
+    fn rrca() {
+        test_bit_ops([0x0f, 0x00], OpReg8::A, 0x3b, Flags::N, 0x9d, Flags::C);
+        test_bit_ops([0x0f, 0x00], OpReg8::A, 0x3b, Flags::C, 0x9d, Flags::C);
+        test_bit_ops([0x0f, 0x00], OpReg8::A, 0x00, Flags::C, 0x00, Flags::empty());
+    }
+
+    #[test]
+    fn rra() {
+        test_bit_ops([0x1f, 0x00], OpReg8::A, 0x81, Flags::H, 0x40, Flags::C);
+        test_bit_ops([0x1f, 0x00], OpReg8::A, 0x00, Flags::C, 0x80, Flags::empty());
+    }
 }

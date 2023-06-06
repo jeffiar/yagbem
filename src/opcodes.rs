@@ -103,6 +103,10 @@ pub enum Opcode {
     ShiftRightArithmetic(OpReg8),
     SwapNibbles(OpReg8),
     ShiftRightLogical(OpReg8),
+    RLCA,
+    RRCA,
+    RLA,
+    RRA,
     Bit(u8, OpReg8),
     Reset(u8, OpReg8),
     Set(u8, OpReg8),
@@ -179,6 +183,10 @@ impl fmt::Display for Instruction {
             ShiftRightArithmetic(r) => write!(f, "SRA  {r}"),
             SwapNibbles(r)          => write!(f, "SWAP {r}"),
             ShiftRightLogical(r)    => write!(f, "SRL  {r}"),
+            RLCA                    => write!(f, "RLCA"),
+            RRCA                    => write!(f, "RRCA"),
+            RLA                     => write!(f, "RLA"),
+            RRA                     => write!(f, "RRA"),
             Bit(b, r)               => write!(f, "BIT  {b},{r}"),
             Reset(b, r)             => write!(f, "RES  {b},{r}"),
             Set(b, r)               => write!(f, "SET  {b},{r}"),
@@ -287,6 +295,11 @@ impl Instruction {
             "00_dd0_011" => ins(IncPair(OpReg16::parse(d)), 1, 8),
             "00_dd1_011" => ins(DecPair(OpReg16::parse(d)), 1, 8),
 
+            "00_000_111" => ins(RLCA, 1, 4),
+            "00_001_111" => ins(RRCA, 1, 4),
+            "00_010_111" => ins(RLA, 1, 4),
+            "00_011_111" => ins(RRA, 1, 4),
+
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
             "11_0cc_010" => ins(JumpCond(Condition::parse(c), fetch_imm16()), 3, 12 /* +4 if branch taken*/),
             "00_011_000" => ins(JumpRelative(fetch_imm8() as i8), 2, 12),
@@ -313,6 +326,8 @@ impl Instruction {
     #[bitmatch]
     pub fn decode_cb_opcode(code: u8) -> Instruction {
         use Opcode::*;
+
+        #[allow(unused_assignments)]
         let mut opcode = Opcode::NoOp;
 
         #[bitmatch]
@@ -334,9 +349,9 @@ impl Instruction {
         // TODO apparently BIT _,(HL) has a different cycle count of 12 but sources are conflicting
 
         Instruction {
-            opcode: opcode,
+            opcode,
             length: 2,
-            cycles: cycles,
+            cycles,
         }
     }
 }
@@ -455,5 +470,9 @@ mod tests {
         assert_eq!("RRC  A",     d(&[0xcb, 0x0f]));
         assert_eq!("RES  0,H",     d(&[0xcb, 0x84]));
         assert_eq!("SET  0,H",     d(&[0xcb, 0xc4]));
+        assert_eq!("RLCA",     d(&[0x07]));
+        assert_eq!("RRCA",     d(&[0x0f]));
+        assert_eq!("RLA",      d(&[0x17]));
+        assert_eq!("RRA",      d(&[0x1f]));
     }
 }
