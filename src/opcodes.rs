@@ -31,10 +31,10 @@ pub enum OpReg16 {
     HL,
     SP,
     AF,
-    // #[strum(serialize = "HL+")]
-    // HLInc,
-    // #[strum(serialize = "HL-")]
-    // HLDec,
+    #[strum(serialize = "HL+")]
+    HLInc,
+    #[strum(serialize = "HL-")]
+    HLDec,
 }
 
 #[duplicate_item(OpField; [OpReg8]; [OpReg16])]
@@ -182,11 +182,15 @@ impl Instruction {
             "11_100_000" => ins(StoreIndirectImm(0xff00 | fetch_imm8() as u16, OpReg8::A), 2, 12),
             "00_000_010" => ins(StoreIndirect(OpReg16::BC, OpReg8::A), 1, 8),
             "00_010_010" => ins(StoreIndirect(OpReg16::DE, OpReg8::A), 1, 8),
+            "00_100_010" => ins(StoreIndirect(OpReg16::HLInc, OpReg8::A), 1, 8),
+            "00_110_010" => ins(StoreIndirect(OpReg16::HLDec, OpReg8::A), 1, 8),
 
             "11_111_010" => ins(LoadIndirectImm(OpReg8::A, fetch_imm16()), 3, 16),
             "11_110_000" => ins(LoadIndirectImm(OpReg8::A, 0xff00 | fetch_imm8() as u16), 2, 12),
             "00_001_010" => ins(LoadIndirect(OpReg8::A, OpReg16::BC), 1, 8),
             "00_011_010" => ins(LoadIndirect(OpReg8::A, OpReg16::DE), 1, 8),
+            "00_101_010" => ins(LoadIndirect(OpReg8::A, OpReg16::HLInc), 1, 8),
+            "00_111_010" => ins(LoadIndirect(OpReg8::A, OpReg16::HLDec), 1, 8),
 
             "11_100_010" => ins(StoreAToIndC, 1, 8),
             "11_110_010" => ins(LoadAFromIndC, 1, 8),
@@ -299,5 +303,9 @@ mod tests {
         assert_eq!("DEC  DE", d(&[0x1B]));
         assert_eq!("DEC  HL", d(&[0x2B]));
         assert_eq!("DEC  SP", d(&[0x3B]));
+        assert_eq!("LD   A,(HL+)", d(&[0x2a]));
+        assert_eq!("LD   A,(HL-)", d(&[0x3a]));
+        assert_eq!("LD   (HL+),A", d(&[0x22]));
+        assert_eq!("LD   (HL-),A", d(&[0x32]));
     }
 }

@@ -130,15 +130,23 @@ impl Cpu {
         }
     }
 
-    fn reg16_read(&self, reg_pair: OpReg16) -> u16 {
+    fn reg16_read(&mut self, reg_pair: OpReg16) -> u16 {
         match reg_pair {
             OpReg16::BC => { (self.b as u16) << 8 | self.c as u16 },
             OpReg16::DE => { (self.d as u16) << 8 | self.e as u16 },
             OpReg16::HL => { (self.h as u16) << 8 | self.l as u16 },
             OpReg16::SP => { self.sp },
             OpReg16::AF => { (self.a as u16) << 8 | self.flags.bits() as u16 },
-            // OpReg16::HLInc => { 0 },
-            // OpReg16::HLDec => { 0 },
+            OpReg16::HLInc => { 
+                let hl = (self.h as u16) << 8 | self.l as u16;
+                self.inc_pair(OpReg16::HL);
+                hl
+            },
+            OpReg16::HLDec => {
+                let hl = (self.h as u16) << 8 | self.l as u16;
+                self.dec_pair(OpReg16::HL);
+                hl
+            },
         }
     }
 
@@ -150,9 +158,9 @@ impl Cpu {
             OpReg16::DE => { self.d = hi;   self.e = lo; },
             OpReg16::HL => { self.h = hi;   self.l = lo; },
             OpReg16::SP => { self.sp = val; },
-            OpReg16::AF => { },
-            // OpReg16::HLInc => { },
-            // OpReg16::HLDec => { },
+            OpReg16::AF => { self.a = hi;   self.flags.bits = lo; },
+            OpReg16::HLInc => { unreachable!() },
+            OpReg16::HLDec => { unreachable!() },
         }
     }
 
@@ -217,6 +225,17 @@ impl Cpu {
         self.sp = self.sp.wrapping_add(2);
         val
     }
+
+    fn inc_pair(&mut self, reg_pair: OpReg16) {
+        let val = self.reg16_read(reg_pair);
+        self.reg16_write(reg_pair, val.wrapping_add(1));
+    }
+
+    fn dec_pair(&mut self, reg_pair: OpReg16) {
+        let val = self.reg16_read(reg_pair);
+        self.reg16_write(reg_pair, val.wrapping_sub(1));
+    }
+
 
     pub fn run(&mut self) {
         self.run_with_callback(|_| {});
@@ -327,14 +346,9 @@ impl Cpu {
                 Opcode::Inc(reg) => { self.add_and_set_flags(self.reg8_read(reg), 1, reg, false); }
                 Opcode::Dec(reg) => { self.sub_and_set_flags(self.reg8_read(reg), 1, reg, false); }
 
-                Opcode::IncPair(reg_pair) => {
-                    let val = self.reg16_read(reg_pair);
-                    self.reg16_write(reg_pair, val.wrapping_add(1));
-                }
-                Opcode::DecPair(reg_pair) => {
-                    let val = self.reg16_read(reg_pair);
-                    self.reg16_write(reg_pair, val.wrapping_sub(1));
-                }
+                Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
+
+                Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
 
                 Opcode::Jump(addr) => { self.pc = addr; }
                 Opcode::JumpRelative(rel) => { self.pc = ((self.pc as i32) + (rel as i32)) as u16; }
@@ -736,17 +750,17 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.sp = 0xfff0;
         // LD H,$11
-        // LD L,$22
+        // LD L,$20
         // PUSH HL
-        cpu.run_instructions_and_halt(&[0x26, 0x11, 0x2e, 0x22, 0xe5]);
+        cpu.run_instructions_and_halt(&[0x26, 0x11, 0x2e, 0x20, 0xe5]);
         assert_eq!(cpu.sp, 0xffee);
         assert_eq!(cpu.h, 0x11);
-        assert_eq!(cpu.l, 0x22);
-        // POP  DE
-        cpu.run_instructions_and_halt(&[0xd1]);
+        assert_eq!(cpu.l, 0x20);
+        // POP  AF
+        cpu.run_instructions_and_halt(&[0xf1]);
         assert_eq!(cpu.sp, 0xfff0);
-        assert_eq!(cpu.d, 0x11);
-        assert_eq!(cpu.e, 0x22);
+        assert_eq!(cpu.a, 0x11);
+        assert_eq!(cpu.flags.bits(), 0x20);
     }
 
 
@@ -884,5 +898,53 @@ mod tests {
         assert_eq!(cpu.h, 0xff);
         assert_eq!(cpu.l, 0xff);
         assert_eq!(cpu.flags, Flags::empty());
+    }
+
+    #[test]
+    fn store_hli_a() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0xff;
+        cpu.l = 0xff;
+        cpu.a = 0x56;
+        cpu.run_instructions_and_halt(&[0x22]); // LD (HL+),A
+        assert_eq!(cpu.mem_read(0xffff), 0x56);
+        assert_eq!(cpu.h, 0);
+        assert_eq!(cpu.l, 0);
+    }
+
+    #[test]
+    fn store_hld_a() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x40;
+        cpu.l = 0x00;
+        cpu.a = 0x05;
+        cpu.run_instructions_and_halt(&[0x32]); // LD (HL-),A
+        assert_eq!(cpu.mem_read(0x4000), 0x05);
+        assert_eq!(cpu.h, 0x3f);
+        assert_eq!(cpu.l, 0xff);
+    }
+
+    #[test]
+    fn load_a_hli() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x01;
+        cpu.l = 0xff;
+        cpu.mem_write(0x1ff, 0x56);
+        cpu.run_instructions_and_halt(&[0x2a]); // LD A,(HL+)
+        assert_eq!(cpu.a, 0x56);
+        assert_eq!(cpu.h, 0x02);
+        assert_eq!(cpu.l, 0x00);
+    }
+
+    #[test]
+    fn load_a_hld() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x8a;
+        cpu.l = 0x5c;
+        cpu.mem_write(0x8a5c, 0x3c);
+        cpu.run_instructions_and_halt(&[0x3a]); // LD A,(HL-)
+        assert_eq!(cpu.a, 0x3c);
+        assert_eq!(cpu.h, 0x8a);
+        assert_eq!(cpu.l, 0x5b);
     }
 }
