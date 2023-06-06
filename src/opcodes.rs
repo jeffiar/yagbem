@@ -80,6 +80,9 @@ pub enum Opcode {
 
     Jump(u16),
 
+    DisableInterrupts,
+    EnableInterrupts,
+
     NotImplemented(u8),
 }
 
@@ -120,6 +123,9 @@ impl fmt::Display for Instruction {
             Dec(r)                  => write!(f, "DEC  {r}"),
 
             Jump(mn)                => write!(f, "JP   ${mn:04x}"),
+
+            DisableInterrupts       => write!(f, "DI"),
+            EnableInterrupts        => write!(f, "EI"),
 
             NotImplemented(o)       => write!(f, "unimplemented opcode 0x{o:02x}"),
         }
@@ -195,6 +201,11 @@ impl Instruction {
 
             "11_000_011" => ins(Jump(fetch_imm16()), 3, 16),
 
+            "11_110_011" => ins(DisableInterrupts, 1, 4),
+            "11_111_011" => ins(EnableInterrupts, 1, 4),
+
+
+
             // _ => panic!("opcode 0x{:02x} not implemented", code[0]),
             "aaaaaaaa" => Self::new(Opcode::NotImplemented(a), 1, 4),
         }
@@ -254,5 +265,7 @@ mod tests {
         assert_eq!("LD   HL,SP+$30", d(&[0xf8, 0x30]));
         assert_eq!("LD   HL,SP+$f0", d(&[0xf8, 0xf0]));
         assert_eq!("JP   $1234", d(&[0xc3, 0x34, 0x12]));
+        assert_eq!("DI", d(&[0xf3]));
+        assert_eq!("EI", d(&[0xfb]));
     }
 }

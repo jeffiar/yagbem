@@ -32,6 +32,8 @@ pub struct Cpu {
     pub sp: u16,
     pub pc: u16,
 
+    pub interrupt_master_enable: bool,
+
     n_cycles: u64,
     pub n_instrs: u64,
     bus: Bus,
@@ -61,6 +63,7 @@ impl Cpu {
             sp: SP_START,
             n_instrs: 0,
             n_cycles: 0,
+            interrupt_master_enable: false,
             bus: Bus::new(),
         }
     }
@@ -83,6 +86,8 @@ impl Cpu {
         self.flags = Flags::empty();
         self.pc = PC_START;
         self.sp = SP_START;
+
+        self.interrupt_master_enable = false;
         self.n_instrs = 0;
         self.n_cycles = 0;
         // self.bus.reset();
@@ -315,7 +320,10 @@ impl Cpu {
 
                 Opcode::Jump(addr) => { self.pc = addr; }
 
-                Opcode::NotImplemented(_opcode) => { continue; }
+                Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
+                Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
+
+                Opcode::NotImplemented(_opcode) => { panic!("Unimplemented opcode")}
             }
 
         }
