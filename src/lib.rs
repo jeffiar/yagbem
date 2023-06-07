@@ -89,11 +89,15 @@ impl fmt::Display for CpuState {
         write!(f, "DE={:02x}{:02x}   ", self.d, self.e)?;
         write!(f, "HL={:02x}{:02x}   ", self.h, self.l)?;
         write!(f, "A={:02x}={:08b}  ", self.a, self.a)?;
-        write!(f, "F ={}{}{}{}   ", 
+        write!(f, "F ={}{}{}{}{}{}{}{}   ", 
                if self.f & (1 << 7) != 0 {"Z"} else {"_"},
                if self.f & (1 << 6) != 0 {"N"} else {"_"},
                if self.f & (1 << 5) != 0 {"H"} else {"_"},
-               if self.f & (1 << 4) != 0 {"C"} else {"_"})?;
+               if self.f & (1 << 4) != 0 {"C"} else {"_"},
+               if self.f & (1 << 3) != 0 {"1"} else {"_"},
+               if self.f & (1 << 2) != 0 {"1"} else {"_"},
+               if self.f & (1 << 1) != 0 {"1"} else {"_"},
+               if self.f & (1 << 0) != 0 {"1"} else {"_"})?;
         write!(f, "PC={:04x}   ", self.pc)?;
         write!(f, "SP={:04x}   ", self.sp)?;
         write!(f, "IME={}  ", self.ime)?;

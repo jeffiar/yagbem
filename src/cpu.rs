@@ -177,7 +177,7 @@ impl Cpu {
             OpReg16::DE => { self.d = hi;   self.e = lo; },
             OpReg16::HL => { self.h = hi;   self.l = lo; },
             OpReg16::SP => { self.sp = val; },
-            OpReg16::AF => { self.a = hi;   self.flags.bits = lo; },
+            OpReg16::AF => { self.a = hi;   self.flags.bits = lo & 0xf0; },
             OpReg16::HLInc => { unreachable!() },
             OpReg16::HLDec => { unreachable!() },
         }
@@ -1138,7 +1138,7 @@ mod tests {
         cpu.run_instructions_and_halt(&[0xf8, 0xf0]);
         assert_eq!(cpu.sp, 0xfff8);
         assert_eq!(cpu.reg16_read(OpReg16::HL), 0xffe8);
-        assert_eq!(cpu.flags, Flags::empty());
+        assert_eq!(cpu.flags, Flags::C);
     }
 
     #[test]
