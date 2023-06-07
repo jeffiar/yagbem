@@ -280,8 +280,8 @@ impl Instruction {
             "00_001_000" => ins(StoreSP(fetch_imm16()), 3, 20),
             "11_110_101" => ins(Push(OpReg16::AF), 1, 16),
             "11_qq0_101" => ins(Push(OpReg16::parse(q)), 1, 16),
-            "11_110_001" => ins(Pop(OpReg16::AF), 1, 16),
-            "11_qq0_001" => ins(Pop(OpReg16::parse(q)), 1, 16),
+            "11_110_001" => ins(Pop(OpReg16::AF), 1, 12),
+            "11_qq0_001" => ins(Pop(OpReg16::parse(q)), 1, 12),
 
             "10_000_rrr" => ins(Add(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
             "10_001_rrr" => ins(Adc(OpReg8::parse(r)), 1, if r == 0b110 { 8 } else { 4 }),
