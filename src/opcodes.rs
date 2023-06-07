@@ -4,7 +4,7 @@ use strum_macros;
 use strum_macros::FromRepr;
 use duplicate::duplicate_item;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Instruction {
     pub opcode: Opcode,
     pub length: u16,
@@ -52,7 +52,7 @@ impl OpField {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Opcode {
     NoOp,
     Halt,

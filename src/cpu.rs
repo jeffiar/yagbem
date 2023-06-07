@@ -34,10 +34,11 @@ pub struct Cpu {
     pub pc: u16,
 
     pub interrupt_master_enable: bool,
+    pub running: bool,
 
     pub n_cycles: u64,
     pub n_instrs: u64,
-    bus: Bus,
+    pub bus: Bus,
 }
 
 impl Mem for Cpu {
@@ -79,6 +80,7 @@ impl Cpu {
             sp: SP_START,
             n_instrs: 0,
             n_cycles: 0,
+            running: true,
             interrupt_master_enable: false,
             bus: Bus::new(),
         }
@@ -102,6 +104,7 @@ impl Cpu {
         self.flags = Flags::empty();
         self.pc = PC_START;
         self.sp = SP_START;
+        self.running = true;
 
         self.interrupt_master_enable = false;
         self.n_instrs = 0;
@@ -327,21 +330,21 @@ impl Cpu {
     }
 
     pub fn run(&mut self) {
-        self.run_with_callback(|_| {}, 1);
+        self.run_with_callback(|_| {}, 2);
     }
 
     /// Run the CPU and run callback *before* each instruction executed
     pub fn run_with_callback<F>(&mut self, mut callback: F, debug: u8) 
     where F: FnMut(&mut Cpu)
     {
-        loop {
+        self.running = true;
+        while self.running {
             callback(self);
 
             let instr = Instruction::decode(self.mem_read(self.pc),
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
-
-            if debug > 0 {
+            if debug >= 2 {
                 eprintln!("{:04x}: {:02x} {} {} {}", 
                           self.pc,
                           self.mem_read(self.pc),
@@ -349,283 +352,285 @@ impl Cpu {
                           if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
                           instr);
             }
+            self.execute_instruction(instr);
+        }
+    }
 
-            self.pc += instr.length;
-            self.n_cycles += instr.cycles;
-            self.n_instrs += 1;
+    pub fn execute_instruction(&mut self, instr: Instruction) {
+        self.pc += instr.length;
+        self.n_cycles += instr.cycles;
+        self.n_instrs += 1;
 
-            match instr.opcode {
-                Opcode::NoOp => {}
-                Opcode::Halt => { return; }
-                Opcode::Stop => { return; }
-                Opcode::Load8(reg, val) => { self.reg8_write(reg, val); }
-                Opcode::LoadReg(dst, src) => {
-                    let val = self.reg8_read(src);
-                    self.reg8_write(dst, val);
-                }
-                Opcode::LoadIndirectImm(reg, addr) => { 
-                    let val = self.mem_read(addr);
-                    self.reg8_write(reg, val);
-                }
-                Opcode::LoadIndirect(reg, reg_pair) => { 
-                    let addr = self.reg16_read(reg_pair);
-                    let val = self.mem_read(addr);
-                    self.reg8_write(reg, val);
-                }
-                Opcode::StoreIndirectImm(addr, reg) => { 
-                    let val = self.reg8_read(reg);
-                    self.mem_write(addr, val);
-                }
-                Opcode::StoreIndirect(reg_pair, reg) => {
-                    let addr = self.reg16_read(reg_pair);
-                    let val = self.reg8_read(reg);
-                    self.mem_write(addr, val);
-                }
-                Opcode::LoadAFromIndC => {
-                    let addr = 0xff00 | self.c as u16;
-                    self.a = self.mem_read(addr);
-                }
-                Opcode::StoreAToIndC => {
-                    let addr = 0xff00 | self.c as u16;
-                    self.mem_write(addr, self.a);
-                }
-                Opcode::Load16(reg_pair, val) => {
-                    self.reg16_write(reg_pair, val);
-                }
-                Opcode::LoadSPHL => { 
-                    self.sp = self.reg16_read(OpReg16::HL);
-                }
-                Opcode::LoadHLSPRelative(rel) => {
-                    self.load_hl_sp_relative(rel);
-                }
-                Opcode::StoreSP(addr) => {
-                    self.mem_write16(addr, self.sp);
-                }
-                Opcode::Push(reg_pair) => {
-                    let val = self.reg16_read(reg_pair);
-                    self.push_onto_stack(val);
-                }
-                Opcode::Pop(reg_pair) => {
-                    let val = self.pop_from_stack();
-                    self.reg16_write(reg_pair, val);
-                }
-
-                Opcode::Add(reg) => { self.add_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
-                Opcode::Adc(reg) => { self.adc_instr(self.reg8_read(reg)); }
-                Opcode::Sub(reg) => { self.sub_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
-                Opcode::Sbc(reg) => { self.sbc_instr(self.reg8_read(reg)); }
-                Opcode::And(reg) => { self.and_instr(self.reg8_read(reg)); }
-                Opcode::Xor(reg) => { self.xor_instr(self.reg8_read(reg)); }
-                Opcode::Or(reg)  => { self.or_instr(self.reg8_read(reg)); }
-                Opcode::Cp(reg)  => { self.cp_instr(self.reg8_read(reg)); }
-
-                Opcode::AddImm(val) => { self.add_instr(self.a, val, OpReg8::A, true); }
-                Opcode::AdcImm(val) => { self.adc_instr(val); }
-                Opcode::SubImm(val) => { self.sub_instr(self.a, val, OpReg8::A, true); }
-                Opcode::SbcImm(val) => { self.sbc_instr(val); }
-                Opcode::AndImm(val) => { self.and_instr(val); }
-                Opcode::XorImm(val) => { self.xor_instr(val); }
-                Opcode::OrImm(val) => { self.or_instr(val); }
-                Opcode::CpImm(val) => { self.cp_instr(val); }
-
-                Opcode::Inc(reg) => { self.add_instr(self.reg8_read(reg), 1, reg, false); }
-                Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
-                Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
-                Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
-                Opcode::AddHL(reg_pair) => {
-                    let op1 = self.reg16_read(OpReg16::HL);
-                    let op2 = self.reg16_read(reg_pair);
-
-                    let sum32 = (op1 as u32).wrapping_add(op2 as u32);
-                    let sum16 = op1.wrapping_add(op2);
-                    let sum12 = (op1 & 0x0fff).wrapping_add(op2 & 0x0fff);
-
-                    self.flags.set(Flags::N, false);
-                    self.flags.set(Flags::H, (sum12 & 0x01000) != 0);
-                    self.flags.set(Flags::C, (sum32 & 0x10000) != 0);
-
-                    self.reg16_write(OpReg16::HL, sum16);
-                }
-                Opcode::AddSP(rel) => { 
-                    // A little hacky, but can optimize if it's too slow
-                    let (h,l) = (self.h, self.l);
-                    self.load_hl_sp_relative(rel);
-                    self.sp = (self.h as u16) << 8 | self.l as u16;
-                    self.h = h;
-                    self.l = l;
-                }
-
-                Opcode::RotateLeftCarry(reg) => {
-                    let val = self.reg8_read(reg);
-                    let new_val = val.rotate_left(1);
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0xf0) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::RotateRightCarry(reg) => {
-                    let val = self.reg8_read(reg);
-                    let new_val = val.rotate_right(1);
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x01) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::RotateLeft(reg) => {
-                    let val = self.reg8_read(reg);
-                    let mut new_val = val.wrapping_shl(1);
-                    new_val |= self.flags.contains(Flags::C) as u8; // set bit 0 depending on old C flag
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x80) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::RotateRight(reg) => {
-                    let val = self.reg8_read(reg);
-                    // eprintln!("Before: {val:08b}, {:?}", self.flags);
-                    let mut new_val = val.wrapping_shr(1);
-                    new_val |= (self.flags.contains(Flags::C) as u8) << 7; // set bit 0 depending on old C flag
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x01) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                    // eprintln!("After:  {new_val:08b}, {:?}", self.flags);
-                }
-                Opcode::ShiftLeftArithmetic(reg) => {
-                    let val = self.reg8_read(reg);
-                    let new_val = val.wrapping_shl(1);
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x80) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::ShiftRightArithmetic(reg) => {
-                    let val = self.reg8_read(reg);
-                    let new_val = (val as i8).wrapping_shr(1) as u8;
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x01) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::SwapNibbles(reg) => {
-                    let val = self.reg8_read(reg);
-                    let lo = val & 0x0f;
-                    let hi = val & 0xf0;
-                    let new_val = lo << 4 | hi >> 4;
-                    self.reg8_write(reg, new_val);
-                    self.flags.remove(Flags::C | Flags::H | Flags::N);
-                    self.flags.set(Flags::Z, new_val == 0);
-                }
-                Opcode::ShiftRightLogical(reg) => {
-                    let val = self.reg8_read(reg);
-                    let new_val = val.wrapping_shr(1);
-                    self.reg8_write(reg, new_val);
-                    self.flags.set(Flags::C, (val & 0x01) != 0);
-                    self.set_flags_from_rot_shift(new_val);
-                }
-                Opcode::RLCA => {
-                    self.a = self.a.rotate_left(1);
-                    self.flags.set(Flags::C, (self.a & 0x01) != 0);
-                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
-                }
-                Opcode::RRCA => {
-                    self.a = self.a.rotate_right(1);
-                    self.flags.set(Flags::C, (self.a & 0x0f) != 0);
-                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
-                }
-                Opcode::RLA => {
-                    let val = self.a;
-                    let mut new_val = val.wrapping_shl(1);
-                    new_val |= self.flags.contains(Flags::C) as u8;
-                    self.a = new_val;
-                    self.flags.set(Flags::C, (val & 0x80) != 0);
-                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
-                }
-                Opcode::RRA => {
-                    let val = self.a;
-                    let mut new_val = val.wrapping_shr(1);
-                    new_val |= (self.flags.contains(Flags::C) as u8) << 7; 
-                    self.a = new_val;
-                    self.flags.set(Flags::C, (val & 0x01) != 0);
-                    self.flags.remove(Flags::H | Flags::N | Flags::Z);
-                }
-                Opcode::Bit(bit, reg) => {
-                    let is_bit_set = (self.reg8_read(reg) & (1 << bit)) != 0;
-                    self.flags.set(Flags::Z, !is_bit_set);
-                    self.flags.set(Flags::N, false);
-                    self.flags.set(Flags::H, true);
-                }
-                Opcode::Reset(bit, reg) => {
-                    let mut val = self.reg8_read(reg);
-                    val &= !(1 << bit); // rust made an interesting choice for the bitwise NOT
-                    self.reg8_write(reg, val);
-                }
-                Opcode::Set(bit, reg)   => {
-                    let mut val = self.reg8_read(reg);
-                    val |= 1 << bit;
-                    self.reg8_write(reg, val);
-                }
-
-                Opcode::Jump(addr) => {
-                    self.pc = addr;
-                }
-                Opcode::JumpCond(condition, addr) => {
-                    if condition.matches(self.flags) {
-                        self.pc = addr;
-                        self.n_cycles += 4;
-                    } 
-                }
-                Opcode::JumpRelative(rel) => {
-                    self.pc = add_relative(self.pc, rel);
-                }
-                Opcode::JumpCondRelative(condition, rel) => { 
-                    if condition.matches(self.flags) {
-                        self.pc = add_relative(self.pc, rel);
-                        self.n_cycles += 4;
-                    }
-                }
-                Opcode::JumpHL => {
-                    self.pc = self.reg16_read(OpReg16::HL);
-                }
-
-                Opcode::Call(addr) => {
-                    self.push_onto_stack(self.pc);
-                    self.pc = addr;
-                }
-                Opcode::CallCond(condition, addr) => {
-                    if condition.matches(self.flags) {
-                        self.push_onto_stack(self.pc);
-                        self.pc = addr;
-                        self.n_cycles += 12;
-                    }
-                }
-                Opcode::Return => {
-                    self.pc = self.pop_from_stack(); 
-                }
-                Opcode::ReturnFromInterrupt => {
-                    self.pc = self.pop_from_stack();
-                    self.interrupt_master_enable = true;
-                }
-                Opcode::ReturnCond(condition) => {
-                    if condition.matches(self.flags) {
-                        self.pc = self.pop_from_stack();
-                        self.n_cycles += 12;
-                    }
-                }
-
-                Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
-                Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-                Opcode::DecimalAdjustAcc => { panic!("Unimplemented instruction DAA"); } // TODO
-                Opcode::ComplementAcc => {
-                    self.a = !self.a;
-                    self.flags.insert(Flags::H | Flags::N);
-                }
-                Opcode::SetCarryFlag => {
-                    self.flags.insert(Flags::C);
-                    self.flags.remove(Flags::H | Flags::N);
-                }
-                Opcode::ComplementCarryFlag => {
-                    self.flags.toggle(Flags::C);
-                    self.flags.remove(Flags::H | Flags::N);
-                }
-
-                Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
+        match instr.opcode {
+            Opcode::NoOp => {}
+            Opcode::Halt => { self.running = false; }
+            Opcode::Stop => { self.running = false; }
+            Opcode::Load8(reg, val) => { self.reg8_write(reg, val); }
+            Opcode::LoadReg(dst, src) => {
+                let val = self.reg8_read(src);
+                self.reg8_write(dst, val);
+            }
+            Opcode::LoadIndirectImm(reg, addr) => { 
+                let val = self.mem_read(addr);
+                self.reg8_write(reg, val);
+            }
+            Opcode::LoadIndirect(reg, reg_pair) => { 
+                let addr = self.reg16_read(reg_pair);
+                let val = self.mem_read(addr);
+                self.reg8_write(reg, val);
+            }
+            Opcode::StoreIndirectImm(addr, reg) => { 
+                let val = self.reg8_read(reg);
+                self.mem_write(addr, val);
+            }
+            Opcode::StoreIndirect(reg_pair, reg) => {
+                let addr = self.reg16_read(reg_pair);
+                let val = self.reg8_read(reg);
+                self.mem_write(addr, val);
+            }
+            Opcode::LoadAFromIndC => {
+                let addr = 0xff00 | self.c as u16;
+                self.a = self.mem_read(addr);
+            }
+            Opcode::StoreAToIndC => {
+                let addr = 0xff00 | self.c as u16;
+                self.mem_write(addr, self.a);
+            }
+            Opcode::Load16(reg_pair, val) => {
+                self.reg16_write(reg_pair, val);
+            }
+            Opcode::LoadSPHL => { 
+                self.sp = self.reg16_read(OpReg16::HL);
+            }
+            Opcode::LoadHLSPRelative(rel) => {
+                self.load_hl_sp_relative(rel);
+            }
+            Opcode::StoreSP(addr) => {
+                self.mem_write16(addr, self.sp);
+            }
+            Opcode::Push(reg_pair) => {
+                let val = self.reg16_read(reg_pair);
+                self.push_onto_stack(val);
+            }
+            Opcode::Pop(reg_pair) => {
+                let val = self.pop_from_stack();
+                self.reg16_write(reg_pair, val);
             }
 
+            Opcode::Add(reg) => { self.add_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
+            Opcode::Adc(reg) => { self.adc_instr(self.reg8_read(reg)); }
+            Opcode::Sub(reg) => { self.sub_instr(self.a, self.reg8_read(reg), OpReg8::A, true); }
+            Opcode::Sbc(reg) => { self.sbc_instr(self.reg8_read(reg)); }
+            Opcode::And(reg) => { self.and_instr(self.reg8_read(reg)); }
+            Opcode::Xor(reg) => { self.xor_instr(self.reg8_read(reg)); }
+            Opcode::Or(reg)  => { self.or_instr(self.reg8_read(reg)); }
+            Opcode::Cp(reg)  => { self.cp_instr(self.reg8_read(reg)); }
+
+            Opcode::AddImm(val) => { self.add_instr(self.a, val, OpReg8::A, true); }
+            Opcode::AdcImm(val) => { self.adc_instr(val); }
+            Opcode::SubImm(val) => { self.sub_instr(self.a, val, OpReg8::A, true); }
+            Opcode::SbcImm(val) => { self.sbc_instr(val); }
+            Opcode::AndImm(val) => { self.and_instr(val); }
+            Opcode::XorImm(val) => { self.xor_instr(val); }
+            Opcode::OrImm(val) => { self.or_instr(val); }
+            Opcode::CpImm(val) => { self.cp_instr(val); }
+
+            Opcode::Inc(reg) => { self.add_instr(self.reg8_read(reg), 1, reg, false); }
+            Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
+            Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
+            Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
+            Opcode::AddHL(reg_pair) => {
+                let op1 = self.reg16_read(OpReg16::HL);
+                let op2 = self.reg16_read(reg_pair);
+
+                let sum32 = (op1 as u32).wrapping_add(op2 as u32);
+                let sum16 = op1.wrapping_add(op2);
+                let sum12 = (op1 & 0x0fff).wrapping_add(op2 & 0x0fff);
+
+                self.flags.set(Flags::N, false);
+                self.flags.set(Flags::H, (sum12 & 0x01000) != 0);
+                self.flags.set(Flags::C, (sum32 & 0x10000) != 0);
+
+                self.reg16_write(OpReg16::HL, sum16);
+            }
+            Opcode::AddSP(rel) => { 
+                // A little hacky, but can optimize if it's too slow
+                let (h,l) = (self.h, self.l);
+                self.load_hl_sp_relative(rel);
+                self.sp = (self.h as u16) << 8 | self.l as u16;
+                self.h = h;
+                self.l = l;
+            }
+
+            Opcode::RotateLeftCarry(reg) => {
+                let val = self.reg8_read(reg);
+                let new_val = val.rotate_left(1);
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0xf0) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::RotateRightCarry(reg) => {
+                let val = self.reg8_read(reg);
+                let new_val = val.rotate_right(1);
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x01) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::RotateLeft(reg) => {
+                let val = self.reg8_read(reg);
+                let mut new_val = val.wrapping_shl(1);
+                new_val |= self.flags.contains(Flags::C) as u8; // set bit 0 depending on old C flag
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x80) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::RotateRight(reg) => {
+                let val = self.reg8_read(reg);
+                // eprintln!("Before: {val:08b}, {:?}", self.flags);
+                let mut new_val = val.wrapping_shr(1);
+                new_val |= (self.flags.contains(Flags::C) as u8) << 7; // set bit 0 depending on old C flag
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x01) != 0);
+                self.set_flags_from_rot_shift(new_val);
+                // eprintln!("After:  {new_val:08b}, {:?}", self.flags);
+            }
+            Opcode::ShiftLeftArithmetic(reg) => {
+                let val = self.reg8_read(reg);
+                let new_val = val.wrapping_shl(1);
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x80) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::ShiftRightArithmetic(reg) => {
+                let val = self.reg8_read(reg);
+                let new_val = (val as i8).wrapping_shr(1) as u8;
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x01) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::SwapNibbles(reg) => {
+                let val = self.reg8_read(reg);
+                let lo = val & 0x0f;
+                let hi = val & 0xf0;
+                let new_val = lo << 4 | hi >> 4;
+                self.reg8_write(reg, new_val);
+                self.flags.remove(Flags::C | Flags::H | Flags::N);
+                self.flags.set(Flags::Z, new_val == 0);
+            }
+            Opcode::ShiftRightLogical(reg) => {
+                let val = self.reg8_read(reg);
+                let new_val = val.wrapping_shr(1);
+                self.reg8_write(reg, new_val);
+                self.flags.set(Flags::C, (val & 0x01) != 0);
+                self.set_flags_from_rot_shift(new_val);
+            }
+            Opcode::RLCA => {
+                self.a = self.a.rotate_left(1);
+                self.flags.set(Flags::C, (self.a & 0x01) != 0);
+                self.flags.remove(Flags::H | Flags::N | Flags::Z);
+            }
+            Opcode::RRCA => {
+                self.a = self.a.rotate_right(1);
+                self.flags.set(Flags::C, (self.a & 0x0f) != 0);
+                self.flags.remove(Flags::H | Flags::N | Flags::Z);
+            }
+            Opcode::RLA => {
+                let val = self.a;
+                let mut new_val = val.wrapping_shl(1);
+                new_val |= self.flags.contains(Flags::C) as u8;
+                self.a = new_val;
+                self.flags.set(Flags::C, (val & 0x80) != 0);
+                self.flags.remove(Flags::H | Flags::N | Flags::Z);
+            }
+            Opcode::RRA => {
+                let val = self.a;
+                let mut new_val = val.wrapping_shr(1);
+                new_val |= (self.flags.contains(Flags::C) as u8) << 7; 
+                self.a = new_val;
+                self.flags.set(Flags::C, (val & 0x01) != 0);
+                self.flags.remove(Flags::H | Flags::N | Flags::Z);
+            }
+            Opcode::Bit(bit, reg) => {
+                let is_bit_set = (self.reg8_read(reg) & (1 << bit)) != 0;
+                self.flags.set(Flags::Z, !is_bit_set);
+                self.flags.set(Flags::N, false);
+                self.flags.set(Flags::H, true);
+            }
+            Opcode::Reset(bit, reg) => {
+                let mut val = self.reg8_read(reg);
+                val &= !(1 << bit); // rust made an interesting choice for the bitwise NOT
+                self.reg8_write(reg, val);
+            }
+            Opcode::Set(bit, reg)   => {
+                let mut val = self.reg8_read(reg);
+                val |= 1 << bit;
+                self.reg8_write(reg, val);
+            }
+
+            Opcode::Jump(addr) => {
+                self.pc = addr;
+            }
+            Opcode::JumpCond(condition, addr) => {
+                if condition.matches(self.flags) {
+                    self.pc = addr;
+                    self.n_cycles += 4;
+                } 
+            }
+            Opcode::JumpRelative(rel) => {
+                self.pc = add_relative(self.pc, rel);
+            }
+            Opcode::JumpCondRelative(condition, rel) => { 
+                if condition.matches(self.flags) {
+                    self.pc = add_relative(self.pc, rel);
+                    self.n_cycles += 4;
+                }
+            }
+            Opcode::JumpHL => {
+                self.pc = self.reg16_read(OpReg16::HL);
+            }
+
+            Opcode::Call(addr) => {
+                self.push_onto_stack(self.pc);
+                self.pc = addr;
+            }
+            Opcode::CallCond(condition, addr) => {
+                if condition.matches(self.flags) {
+                    self.push_onto_stack(self.pc);
+                    self.pc = addr;
+                    self.n_cycles += 12;
+                }
+            }
+            Opcode::Return => {
+                self.pc = self.pop_from_stack(); 
+            }
+            Opcode::ReturnFromInterrupt => {
+                self.pc = self.pop_from_stack();
+                self.interrupt_master_enable = true;
+            }
+            Opcode::ReturnCond(condition) => {
+                if condition.matches(self.flags) {
+                    self.pc = self.pop_from_stack();
+                    self.n_cycles += 12;
+                }
+            }
+
+            Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
+            Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
+            Opcode::DecimalAdjustAcc => { panic!("Unimplemented instruction DAA"); } // TODO
+            Opcode::ComplementAcc => {
+                self.a = !self.a;
+                self.flags.insert(Flags::H | Flags::N);
+            }
+            Opcode::SetCarryFlag => {
+                self.flags.insert(Flags::C);
+                self.flags.remove(Flags::H | Flags::N);
+            }
+            Opcode::ComplementCarryFlag => {
+                self.flags.toggle(Flags::C);
+                self.flags.remove(Flags::H | Flags::N);
+            }
+
+            Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
         }
     }
 }

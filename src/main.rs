@@ -1,5 +1,5 @@
 use std::fs;
-use std::time::SystemTime;
+// use std::time::SystemTime;
 
 use gbem::Cpu;
 use gbem::Mem;
@@ -132,7 +132,7 @@ fn main() {
             run_rom_file(&rom_file, !no_display, cli.debug);
         }
         Some(Commands::TestMoo {opcode} ) => {
-            test_moo(opcode);
+            gbem::test_moo(opcode);
         }
         None => eprintln!("No command specified.")
     }
@@ -146,9 +146,22 @@ fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
     cpu.load_rom(&program);
     cpu.reset();
 
+
     if !display {
-        cpu.run_with_callback(|_| {}, debug);
-        return;
+        let mut next_frame_n_cycle = 0;
+        // let mut last_frame_time = SystemTime::now();
+        cpu.run_with_callback(move |cpu: &mut Cpu| {
+            if cpu.n_cycles < next_frame_n_cycle {
+                return;
+            }
+            next_frame_n_cycle += CYCLES_PER_FRAME;
+
+            // let now = SystemTime::now();
+            // if debug >= 1 {
+                // eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
+            // }
+            // last_frame_time = now;
+        }, debug);
     }
 
     // initialize SDL2 (https://bugzmanov.github.io/nes_ebook/chapter_3_4.html)
@@ -171,28 +184,28 @@ fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
 
     eprintln!("Initialized SDL2");
 
+    // let mut last_frame_time = SystemTime::now();
     let mut next_frame_n_cycle = 0;
-    let mut last_frame_time = SystemTime::now();
     cpu.run_with_callback(move |cpu: &mut Cpu| {
         if cpu.n_cycles < next_frame_n_cycle {
             return;
         }
         next_frame_n_cycle += CYCLES_PER_FRAME;
 
-        let now = SystemTime::now();
-        eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
-        last_frame_time = now;
+        // let now = SystemTime::now();
+        // eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
+        // last_frame_time = now;
 
         handle_user_input(&mut event_pump);
         let mut tile_map_rgb = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
 
+        // let t1 = SystemTime::now();
+
         let mut addr = 0x9800;
-        // let mut tile_data = 0x8000;
         for x_tile in 0..32 {
             for y_tile in 0..32 {
                 let chr = cpu.mem_read(addr);
                 let tile_data = 0x8000 + (chr as u16 * 16);
-                // eprintln!("{x_tile},{y_tile}: {chr}");
                 paint_tile(&cpu.mem_read_range(tile_data, tile_data + 16), 
                            &mut tile_map_rgb, 
                            SCREEN_FULL_X,
@@ -200,21 +213,22 @@ fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
                            x_tile * 8,
                            y_tile * 8);
                 addr += 1;
-                // tile_data += 16;
             }
         }
+
+        // let t2 = SystemTime::now();
+        // eprintln!("Tile paint time: {}", t2.duration_since(t1).expect("Time went backwards").as_millis());
 
         texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();
+
+        // let t3 = SystemTime::now();
+        // eprintln!("Canvas update time: {}", t3.duration_since(t2).expect("Time went backwards").as_millis());
 
         // ::std::thread::sleep(std::time::Duration::from_millis(20));
     }, debug);
 
     eprintln!("Program terminated after {} cycles", cpu.n_cycles);
     std::process::exit(0);
-}
-
-fn test_moo(opcode: &Option<String>) {
-    println!("Mooooo, opcode = {:?}", opcode);
 }
