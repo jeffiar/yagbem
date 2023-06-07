@@ -237,6 +237,7 @@ impl Cpu {
             self.add_instr(self.a, val, OpReg8::A, true);
             self.flags |= flags;
         }
+        self.flags.set(Flags::Z, self.a == 0);
     }
 
     fn sbc_instr(&mut self, val: u8) {
@@ -250,6 +251,7 @@ impl Cpu {
             self.sub_instr(self.a, val, OpReg8::A, true);
             self.flags |= flags;
         }
+        self.flags.set(Flags::Z, self.a == 0);
     }
 
     fn and_instr(&mut self, val: u8) {
