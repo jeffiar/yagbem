@@ -369,7 +369,15 @@ impl Instruction {
             "11_bbb_rrr" => { opcode = Set(b, OpReg8::parse(r));               }
         };
 
-        let cycles = if (code & 0b00_000_111) == 0b110 { 16 } else { 8 };
+        let cycles = if (code & 0x07 ) == 0x06 { 
+            if (code & 0xc0) == 0x40 {
+                12
+            } else {
+                16 
+            }
+        } else { 
+            8 
+        };
         // TODO apparently BIT _,(HL) has a different cycle count of 12 but sources are conflicting
 
         Instruction {
