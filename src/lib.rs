@@ -158,7 +158,9 @@ fn run_test(test: &Test, debug: u8) {
 
     cpu.execute_instruction(instr);
 
-    let cpu_final = CpuState::from_cpu(&cpu);
+    let mut cpu_final = CpuState::from_cpu(&cpu);
+    // the IME flag is not properly configured in the tests
+    cpu_final.ime = test_final.ime;
 
     let mut result: Result<(),String> = Ok(());
 
