@@ -151,7 +151,7 @@ fn main() {
 
     let mut mem_disp_start = 0x0000;
 
-    cpu.run_with_callback(move |cpu| {
+    let callback = move |cpu: &mut Cpu| {
         if cpu.n_instrs % 1000 != 0 {
             return;
         }
@@ -185,5 +185,8 @@ fn main() {
         }
 
         // ::std::thread::sleep(std::time::Duration::from_millis(20));
-    });
+    };
+
+    // cpu.run_with_callback(callback);
+    cpu.run();
 }

@@ -94,6 +94,8 @@ pub enum Opcode {
     Dec(OpReg8),
     IncPair(OpReg16),
     DecPair(OpReg16),
+    AddHL(OpReg16),
+    AddSP(i8),
 
     RotateLeftCarry(OpReg8),
     RotateRightCarry(OpReg8),
@@ -125,6 +127,10 @@ pub enum Opcode {
 
     DisableInterrupts,
     EnableInterrupts,
+    DecimalAdjustAcc,
+    ComplementAcc,
+    SetCarryFlag,
+    ComplementCarryFlag,
 
     NotImplemented(u8),
 }
@@ -174,6 +180,8 @@ impl fmt::Display for Instruction {
             Dec(r)                  => write!(f, "DEC  {r}"),
             IncPair(dd)             => write!(f, "INC  {dd}"),
             DecPair(dd)             => write!(f, "DEC  {dd}"),
+            AddHL(dd)               => write!(f, "ADD  HL,{dd}"),
+            AddSP(e)                => write!(f, "ADD  SP,${e:02x}"),
 
             RotateLeftCarry(r)      => write!(f, "RLC  {r}"),
             RotateRightCarry(r)     => write!(f, "RRC  {r}"),
@@ -205,6 +213,10 @@ impl fmt::Display for Instruction {
 
             DisableInterrupts       => write!(f, "DI"),
             EnableInterrupts        => write!(f, "EI"),
+            DecimalAdjustAcc        => write!(f, "DAA"),
+            ComplementAcc           => write!(f, "CPL"),
+            SetCarryFlag            => write!(f, "SCF"),
+            ComplementCarryFlag     => write!(f, "CCF"),
 
             NotImplemented(o)       => write!(f, "unimplemented opcode 0x{o:02x}"),
         }
@@ -291,9 +303,10 @@ impl Instruction {
 
             "00_rrr_100" => ins(Inc(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
             "00_rrr_101" => ins(Dec(OpReg8::parse(r)), 1, if r == 0b110 { 12 } else { 4 }),
-
             "00_dd0_011" => ins(IncPair(OpReg16::parse(d)), 1, 8),
             "00_dd1_011" => ins(DecPair(OpReg16::parse(d)), 1, 8),
+            "00_dd1_001" => ins(AddHL(OpReg16::parse(d)), 1, 8),
+            "11_101_000" => ins(AddSP(fetch_imm8() as i8), 2, 16),
 
             "00_000_111" => ins(RLCA, 1, 4),
             "00_001_111" => ins(RRCA, 1, 4),
@@ -314,10 +327,11 @@ impl Instruction {
 
             "11_110_011" => ins(DisableInterrupts, 1, 4),
             "11_111_011" => ins(EnableInterrupts, 1, 4),
+            "00_100_111" => ins(DecimalAdjustAcc,    1, 4),
+            "00_101_111" => ins(ComplementAcc,       1, 4),
+            "00_110_111" => ins(SetCarryFlag,        1, 4),
+            "00_111_111" => ins(ComplementCarryFlag, 1, 4),
 
-
-
-            // _ => panic!("opcode 0x{:02x} not implemented", code[0]),
             "aaaaaaaa" => Self::new(Opcode::NotImplemented(a), 1, 4),
         }
     }
@@ -474,5 +488,14 @@ mod tests {
         assert_eq!("RRCA",     d(&[0x0f]));
         assert_eq!("RLA",      d(&[0x17]));
         assert_eq!("RRA",      d(&[0x1f]));
+        assert_eq!("ADD  HL,BC", d(&[0x09]));
+        assert_eq!("ADD  HL,DE", d(&[0x19]));
+        assert_eq!("ADD  HL,HL", d(&[0x29]));
+        assert_eq!("ADD  HL,SP", d(&[0x39]));
+        assert_eq!("ADD  SP,$12", d(&[0xe8, 0x12]));
+        assert_eq!("DAA", d(&[0x27]));
+        assert_eq!("CPL", d(&[0x2f]));
+        assert_eq!("SCF", d(&[0x37]));
+        assert_eq!("CCF", d(&[0x3f]));
     }
 }

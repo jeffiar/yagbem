@@ -302,6 +302,25 @@ impl Cpu {
         self.reg16_write(reg_pair, val.wrapping_sub(1));
     }
 
+    fn load_hl_sp_relative(&mut self, rel: i8) {
+        // add lower 8 bits as an unsigned int
+        let lo = (self.sp & 0xff) as u8;
+        let hi = (self.sp >> 8) as u8;
+        self.add_instr(lo, rel as u8, OpReg8::L, true);
+
+        // carry or borrow into the upper 8 bits depending on result
+        if (rel > 0) & self.flags.contains(Flags::C) {
+            self.add_instr(hi, 1, OpReg8::H, true);
+        } else if (rel < 0) & !self.flags.contains(Flags::C) {
+            self.sub_instr(hi, 1, OpReg8::H, true);
+        } else {
+            self.h = hi;
+            self.flags.remove(Flags::C | Flags::H);
+        }
+
+        self.flags.remove(Flags::Z | Flags::N);
+    }
+
     fn set_flags_from_rot_shift(&mut self, val: u8) {
         self.flags.remove(Flags::H | Flags::N);
         self.flags.set(Flags::Z, val == 0);
@@ -375,22 +394,7 @@ impl Cpu {
                     self.sp = self.reg16_read(OpReg16::HL);
                 }
                 Opcode::LoadHLSPRelative(rel) => {
-                    // add lower 8 bits as an unsigned int
-                    let lo = (self.sp & 0xff) as u8;
-                    let hi = (self.sp >> 8) as u8;
-                    self.add_instr(lo, rel as u8, OpReg8::L, true);
-
-                    // carry or borrow into the upper 8 bits depending on result
-                    if (rel > 0) & self.flags.contains(Flags::C) {
-                        self.add_instr(hi, 1, OpReg8::H, true);
-                    } else if (rel < 0) & !self.flags.contains(Flags::C) {
-                        self.sub_instr(hi, 1, OpReg8::H, true);
-                    } else {
-                        self.h = hi;
-                        self.flags.remove(Flags::C | Flags::H);
-                    }
-
-                    self.flags.remove(Flags::Z | Flags::N);
+                    self.load_hl_sp_relative(rel);
                 }
                 Opcode::StoreSP(addr) => {
                     self.mem_write16(addr, self.sp);
@@ -426,6 +430,28 @@ impl Cpu {
                 Opcode::Dec(reg) => { self.sub_instr(self.reg8_read(reg), 1, reg, false); }
                 Opcode::IncPair(reg_pair) => { self.inc_pair(reg_pair) }
                 Opcode::DecPair(reg_pair) => { self.dec_pair(reg_pair) }
+                Opcode::AddHL(reg_pair) => {
+                    let op1 = self.reg16_read(OpReg16::HL);
+                    let op2 = self.reg16_read(reg_pair);
+
+                    let sum32 = (op1 as u32).wrapping_add(op2 as u32);
+                    let sum16 = op1.wrapping_add(op2);
+                    let sum12 = (op1 & 0x0fff).wrapping_add(op2 & 0x0fff);
+
+                    self.flags.set(Flags::N, false);
+                    self.flags.set(Flags::H, (sum12 & 0x01000) != 0);
+                    self.flags.set(Flags::C, (sum32 & 0x10000) != 0);
+
+                    self.reg16_write(OpReg16::HL, sum16);
+                }
+                Opcode::AddSP(rel) => { 
+                    // A little hacky, but can optimize if it's too slow
+                    let (h,l) = (self.h, self.l);
+                    self.load_hl_sp_relative(rel);
+                    self.sp = (self.h as u16) << 8 | self.l as u16;
+                    self.h = h;
+                    self.l = l;
+                }
 
                 Opcode::RotateLeftCarry(reg) => {
                     let val = self.reg8_read(reg);
@@ -554,9 +580,6 @@ impl Cpu {
                     self.pc = self.reg16_read(OpReg16::HL);
                 }
 
-                Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
-                Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-
                 Opcode::Call(addr) => {
                     self.push_onto_stack(self.pc);
                     self.pc = addr;
@@ -580,6 +603,22 @@ impl Cpu {
                         self.pc = self.pop_from_stack();
                         self.n_cycles += 12;
                     }
+                }
+
+                Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
+                Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
+                Opcode::DecimalAdjustAcc => { break; } // TODO
+                Opcode::ComplementAcc => {
+                    self.a = !self.a;
+                    self.flags.insert(Flags::H | Flags::N);
+                }
+                Opcode::SetCarryFlag => {
+                    self.flags.insert(Flags::C);
+                    self.flags.remove(Flags::H | Flags::N);
+                }
+                Opcode::ComplementCarryFlag => {
+                    self.flags.toggle(Flags::C);
+                    self.flags.remove(Flags::H | Flags::N);
                 }
 
                 Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
@@ -1475,6 +1514,42 @@ mod tests {
     }
 
     #[test]
+    fn add_hl_dd() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x8a;
+        cpu.l = 0x23;
+        cpu.b = 0x06;
+        cpu.c = 0x05;
+        cpu.run_instructions_and_halt(&[0x09]); // ADD HL,BC
+        assert_eq!(cpu.h, 0x90);
+        assert_eq!(cpu.l, 0x28);
+        assert_eq!(cpu.flags, Flags::H);
+    }
+
+    #[test]
+    fn add_hl_dd_2() {
+        let mut cpu = Cpu::new_flat();
+        cpu.h = 0x8a;
+        cpu.l = 0x23;
+        cpu.run_instructions_and_halt(&[0x29]); // ADD HL,HL
+        assert_eq!(cpu.h, 0x14);
+        assert_eq!(cpu.l, 0x46);
+        assert_eq!(cpu.flags, Flags::C | Flags::H);
+    }
+
+    #[test]
+    fn add_sp() {
+        let mut cpu = Cpu::new_flat();
+        cpu.sp = 0xfff8;
+        cpu.run_instructions_and_halt(&[0xe8, 2]); // ADD SP, 2
+        assert_eq!(cpu.sp, 0xfffa);
+        assert_eq!(cpu.flags, Flags::empty());
+        cpu.run_instructions_and_halt(&[0xe8, 6]); // ADD SP, 6
+        assert_eq!(cpu.sp, 0x00);
+        assert_eq!(cpu.flags, Flags::C | Flags::H);
+    }
+
+    #[test]
     fn store_hli_a() {
         let mut cpu = Cpu::new_flat();
         cpu.h = 0xff;
@@ -1656,5 +1731,57 @@ mod tests {
     fn rra() {
         test_bit_ops([0x1f, 0x00], OpReg8::A, 0x81, Flags::H, 0x40, Flags::C);
         test_bit_ops([0x1f, 0x00], OpReg8::A, 0x00, Flags::C, 0x80, Flags::empty());
+    }
+
+    #[test]
+    fn cpl() {
+        let mut cpu = Cpu::new_flat();
+        cpu.a = 0x35;
+        cpu.flags = Flags::C;
+        cpu.run_instructions_and_halt(&[0x2f]);
+        assert_eq!(cpu.a, 0xca);
+        assert_eq!(cpu.flags, Flags::C | Flags::H | Flags::N);
+    }
+
+    #[test]
+    fn ccf() {
+        let mut cpu = Cpu::new_flat();
+        cpu.a = 0x35;
+        cpu.flags = Flags::C | Flags::H | Flags::N | Flags::Z;
+        cpu.run_instructions_and_halt(&[0x3f]);
+        assert_eq!(cpu.a, 0x35);
+        assert_eq!(cpu.flags, Flags::Z);
+    }
+
+    #[test]
+    fn ccf_2() {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = Flags::empty();
+        cpu.run_instructions_and_halt(&[0x3f]);
+        assert_eq!(cpu.flags, Flags::C);
+    }
+
+    #[test]
+    fn ccf_3() {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = Flags::C;
+        cpu.run_instructions_and_halt(&[0x3f]);
+        assert_eq!(cpu.flags, Flags::empty());
+    }
+
+    #[test]
+    fn scf() {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = Flags::C | Flags::H | Flags::N | Flags::Z;
+        cpu.run_instructions_and_halt(&[0x37]);
+        assert_eq!(cpu.flags, Flags::C | Flags::Z);
+    }
+
+    #[test]
+    fn scf_2() {
+        let mut cpu = Cpu::new_flat();
+        cpu.flags = Flags::empty();
+        cpu.run_instructions_and_halt(&[0x37]);
+        assert_eq!(cpu.flags, Flags::C);
     }
 }
