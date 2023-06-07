@@ -357,9 +357,9 @@ impl Cpu {
     }
 
     pub fn execute_instruction(&mut self, instr: Instruction) {
-        self.pc += instr.length;
-        self.n_cycles += instr.cycles;
-        self.n_instrs += 1;
+        self.pc = self.pc.wrapping_add(instr.length);
+        self.n_cycles = self.n_cycles.wrapping_add(instr.cycles);
+        self.n_instrs = self.n_instrs.wrapping_add(1);
 
         match instr.opcode {
             Opcode::NoOp => {}
