@@ -315,12 +315,14 @@ impl Cpu {
 
         // carry or borrow into the upper 8 bits depending on result
         if (rel > 0) & self.flags.contains(Flags::C) {
-            self.add_instr(hi, 1, OpReg8::H, true);
+            // self.add_instr(hi, 1, OpReg8::H, true);
+            self.h = hi.wrapping_add(1);
         } else if (rel < 0) & !self.flags.contains(Flags::C) {
-            self.sub_instr(hi, 1, OpReg8::H, true);
+            self.h = hi.wrapping_sub(1);
+            // self.sub_instr(hi, 1, OpReg8::H, true);
         } else {
             self.h = hi;
-            self.flags.remove(Flags::C | Flags::H);
+            // self.flags.remove(Flags::C | Flags::H);
         }
 
         self.flags.remove(Flags::Z | Flags::N);
@@ -477,7 +479,7 @@ impl Cpu {
                 let val = self.reg8_read(reg);
                 let new_val = val.rotate_left(1);
                 self.reg8_write(reg, new_val);
-                self.flags.set(Flags::C, (val & 0xf0) != 0);
+                self.flags.set(Flags::C, (val & 0x80) != 0);
                 self.set_flags_from_rot_shift(new_val);
             }
             Opcode::RotateRightCarry(reg) => {
