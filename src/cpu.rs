@@ -333,13 +333,33 @@ impl Cpu {
         self.flags.set(Flags::Z, val == 0);
     }
 
-    fn daa(&mut self) -> u8 {
-        let _lonib = 0x0f & self.a;
-        let _hinib = (0xf0 & self.a) >> 4;
+    fn daa(&mut self, val: u8) -> u8 {
+        // I cheated a little and used this pseudocode:
+        // https://ehaskins.com/2018-01-30%20Z80%20DAA/
 
-        // TODO
+        let mut correction: i16 = 0;
+        let N = self.flags.contains(Flags::N);
+        let H = self.flags.contains(Flags::H);
+        let C = self.flags.contains(Flags::C);
 
-        self.a
+        if H || (!N && (val & 0xf) > 9) {
+            correction |= 0x6;
+        }
+        if C || (!N && (val > 0x99)) {
+            correction |= 0x60;
+            self.flags.set(Flags::C, true);
+        }
+
+        let out = if !N {
+            val as i16 + correction
+        } else {
+            val as i16 - correction
+        };
+
+        let out = out as u8;
+        self.flags.set(Flags::Z, out == 0);
+        self.flags.remove(Flags::H);
+        out
     }
 
     pub fn run(&mut self) {
@@ -633,7 +653,7 @@ impl Cpu {
 
             Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
             Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-            Opcode::DecimalAdjustAcc => { self.a = self.daa(); } // TODO
+            Opcode::DecimalAdjustAcc => { self.a = self.daa(self.a); } // TODO
             Opcode::ComplementAcc => {
                 self.a = !self.a;
                 self.flags.insert(Flags::H | Flags::N);

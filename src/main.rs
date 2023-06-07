@@ -18,7 +18,7 @@ const SCREEN_FULL_Y: u32 = 256;
 // const SCREEN_DISP_X = 160;
 // const SCREEN_DISP_Y = 144;
 
-const PIXEL_SCALE: f32 = 4.0;
+const PIXEL_SCALE: f32 = 3.0;
 
 // use sdl2::render::Canvas;
 // use sdl2::render::Texture;
