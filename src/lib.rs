@@ -52,10 +52,12 @@ struct CpuState {
 impl CpuState {
     fn from_cpu(cpu: &Cpu) -> CpuState {
         let mut ram = Vec::<Vec<u16>>::new();
+        let mut last_addr: i32 = -1;
         for addr in cpu.bus.dirty_addrs().iter().sorted() {
             let val = cpu.mem_read(*addr);
-            if val != 0 {
+            if val != 0 && *addr as i32 != last_addr {
                 ram.push(vec![*addr, val as u16]);
+                last_addr = *addr as i32;
             }
         }
         CpuState {

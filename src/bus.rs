@@ -1,5 +1,4 @@
 use std::io::{stderr, Write};
-use std::collections::HashSet;
 
 mod register {
     pub const SB: u16 = 0xff01;
@@ -28,7 +27,7 @@ pub trait Mem {
 
 pub struct Bus {
     mem: [u8; 0x10000],
-    dirty_addrs: HashSet<u16>,
+    dirty_addrs: Vec<u16>,
 }
 
 impl Mem for Bus {
@@ -47,7 +46,7 @@ impl Mem for Bus {
             _ => {}
         }
         self.mem[addr as usize] = val; 
-        self.dirty_addrs.insert(addr);
+        self.dirty_addrs.push(addr);
     }
 
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8] {
@@ -58,7 +57,7 @@ impl Mem for Bus {
 
 impl Bus {
     pub fn new() -> Bus {
-        Bus { mem: [0; 0x10000], dirty_addrs: HashSet::new(), }
+        Bus { mem: [0; 0x10000], dirty_addrs: Vec::new(), }
     }
 
     pub fn reset(&mut self) {
@@ -77,7 +76,7 @@ impl Bus {
         self.dirty_addrs.clear();
     }
 
-    pub fn dirty_addrs(&self) -> &HashSet<u16> {
+    pub fn dirty_addrs(&self) -> &Vec<u16> {
         &self.dirty_addrs
     }
 }
