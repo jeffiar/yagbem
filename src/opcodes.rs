@@ -124,6 +124,7 @@ pub enum Opcode {
     Return,
     ReturnFromInterrupt,
     ReturnCond(Condition),
+    Restart(u8),
 
     DisableInterrupts,
     EnableInterrupts,
@@ -210,6 +211,7 @@ impl fmt::Display for Instruction {
             Return                  => write!(f, "RET"),
             ReturnFromInterrupt     => write!(f, "RETI"),
             ReturnCond(c)           => write!(f, "RET  {c}"),
+            Restart(n)              => write!(f, "RST  ${n:02x}"),
 
             DisableInterrupts       => write!(f, "DI"),
             EnableInterrupts        => write!(f, "EI"),
@@ -324,6 +326,14 @@ impl Instruction {
             "11_001_001" => ins(Return, 1, 16),
             "11_011_001" => ins(ReturnFromInterrupt, 1, 16),
             "11_0cc_000" => ins(ReturnCond(Condition::parse(c)), 1, 8 /* +12 if branch taken */),
+            "11_000_111" => ins(Restart(0x00), 1, 16),
+            "11_001_111" => ins(Restart(0x08), 1, 16),
+            "11_010_111" => ins(Restart(0x10), 1, 16),
+            "11_011_111" => ins(Restart(0x18), 1, 16),
+            "11_100_111" => ins(Restart(0x20), 1, 16),
+            "11_101_111" => ins(Restart(0x28), 1, 16),
+            "11_110_111" => ins(Restart(0x30), 1, 16),
+            "11_111_111" => ins(Restart(0x38), 1, 16),
 
             "11_110_011" => ins(DisableInterrupts, 1, 4),
             "11_111_011" => ins(EnableInterrupts, 1, 4),
@@ -497,5 +507,13 @@ mod tests {
         assert_eq!("CPL", d(&[0x2f]));
         assert_eq!("SCF", d(&[0x37]));
         assert_eq!("CCF", d(&[0x3f]));
+        assert_eq!("RST  $00", d(&[0xc7]));
+        assert_eq!("RST  $08", d(&[0xcf]));
+        assert_eq!("RST  $10", d(&[0xd7]));
+        assert_eq!("RST  $18", d(&[0xdf]));
+        assert_eq!("RST  $20", d(&[0xe7]));
+        assert_eq!("RST  $28", d(&[0xef]));
+        assert_eq!("RST  $30", d(&[0xf7]));
+        assert_eq!("RST  $38", d(&[0xff]));
     }
 }

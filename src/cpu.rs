@@ -624,6 +624,10 @@ impl Cpu {
                     self.n_cycles += 12;
                 }
             }
+            Opcode::Restart(addr) => {
+                self.push_onto_stack(self.pc);
+                self.pc = addr as u16;
+            }
 
             Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
             Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
