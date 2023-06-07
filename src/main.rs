@@ -132,7 +132,7 @@ fn main() {
             run_rom_file(&rom_file, !no_display, cli.debug);
         }
         Some(Commands::TestMoo {opcode} ) => {
-            gbem::test_moo(opcode);
+            gbem::test_moo(opcode, cli.debug);
         }
         None => eprintln!("No command specified.")
     }

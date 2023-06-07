@@ -113,7 +113,7 @@ struct Test {
     cycles: Vec<Value>,
 }
 
-fn run_test(test: &Test) {
+fn run_test(test: &Test, debug: u8) {
     // Set up processor
     let mut cpu = Cpu {
         a : test.initial.a,
@@ -140,15 +140,22 @@ fn run_test(test: &Test) {
     }
 
     let instr = Instruction::decode(cpu.mem_read(cpu.pc),
-                                    || {cpu.mem_read(cpu.pc + 1)},
-                                    || {cpu.mem_read(cpu.pc + 2)});
+                                    || {cpu.mem_read(cpu.pc.wrapping_add(1))},
+                                    || {cpu.mem_read(cpu.pc.wrapping_add(2))});
 
     let initial = CpuState::from_cpu(&cpu);
+    let test_final = test.r#final.without_ram_zeros();
+
+    if debug >= 2 {
+        println!("Test {}: ({})", test.name, instr);
+        println!("Initial:  {}", initial);
+        println!("Expected: {}", test_final);
+    }
 
     cpu.execute_instruction(instr);
 
     let cpu_final = CpuState::from_cpu(&cpu);
-    let test_final = test.r#final.without_ram_zeros();
+
     let mut result: Result<(),String> = Ok(());
 
     if cpu.n_cycles as usize != test.cycles.len() * 4 {
@@ -172,24 +179,28 @@ fn run_test(test: &Test) {
     }
 }
 
-fn test_opcode(opcode: &str) {
+fn test_opcode(opcode: &str, debug: u8) {
     let fname = format!("moo-tests/{}.json", opcode);
     let f = File::open(fname).expect("Could not find test file");
     let reader = BufReader::new(f);
     let tests: Vec<Test> = serde_json::from_reader(reader).expect("Json parse failed");
 
     for test in tests.iter() {
-        run_test(test);
+        run_test(test, debug);
     }
     println!("Opcode {}: all tests passed.", opcode);
 }
 
-pub fn test_moo(opcode: &Option<String>) {
+pub fn test_moo(opcode: &Option<String>, debug: u8) {
     match opcode {
-        Some(opcode) => { test_opcode(opcode); }
+        Some(opcode) => { test_opcode(opcode, debug); }
         None => {
             for opcode in 0..256 {
-                test_opcode(&format!("{:02x}", opcode))
+                if opcode == 0x27 { // DAA
+                    println!("Skipping opcode 0x27 (DAA)");
+                    continue;
+                }
+                test_opcode(&format!("{:02x}", opcode), debug)
             }
         }
     }

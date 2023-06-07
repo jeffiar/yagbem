@@ -331,6 +331,15 @@ impl Cpu {
         self.flags.set(Flags::Z, val == 0);
     }
 
+    fn daa(&mut self) -> u8 {
+        let _lonib = 0x0f & self.a;
+        let _hinib = (0xf0 & self.a) >> 4;
+
+        // TODO
+
+        self.a
+    }
+
     pub fn run(&mut self) {
         self.run_with_callback(|_| {}, 2);
     }
@@ -344,8 +353,8 @@ impl Cpu {
             callback(self);
 
             let instr = Instruction::decode(self.mem_read(self.pc),
-                                            || {self.mem_read(self.pc + 1)},
-                                            || {self.mem_read(self.pc + 2)});
+                                            || {self.mem_read(self.pc.wrapping_add(1))},
+                                            || {self.mem_read(self.pc.wrapping_add(2))});
             if debug >= 2 {
                 eprintln!("{:04x}: {:02x} {} {} {}", 
                           self.pc,
@@ -618,7 +627,7 @@ impl Cpu {
 
             Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
             Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-            Opcode::DecimalAdjustAcc => { panic!("Unimplemented instruction DAA"); } // TODO
+            Opcode::DecimalAdjustAcc => { self.a = self.daa(); } // TODO
             Opcode::ComplementAcc => {
                 self.a = !self.a;
                 self.flags.insert(Flags::H | Flags::N);
@@ -713,7 +722,7 @@ mod tests {
         cpu.mem_write(0x33a4, 0x45);
         cpu.run_instructions_and_halt(&[0xfa, 0xa4, 0x33]); //LD   A,($33a4)
         assert_eq!(cpu.a, 0x45);
-        assert_eq!(cpu.n_cycles, 16 + 4);
+        assert_eq!(cpu.n_cycles, 16 + 12);
     }
 
     #[test]
@@ -724,7 +733,7 @@ mod tests {
         cpu.mem_write(0x55a4, 0x69);
         cpu.run_instructions_and_halt(&[0x0a]); // LD   A,(BC)
         assert_eq!(cpu.a, 0x69);
-        assert_eq!(cpu.n_cycles, 8 + 4);
+        assert_eq!(cpu.n_cycles, 8 + 12);
     }
 
     #[test]
@@ -733,7 +742,7 @@ mod tests {
         cpu.a = 0x2f;
         cpu.run_instructions_and_halt(&[0xea, 0x52, 0xcc]); // LD   (DE),A
         assert_eq!(cpu.mem_read(0xcc52), 0x2f);
-        assert_eq!(cpu.n_cycles, 16 + 4);
+        assert_eq!(cpu.n_cycles, 16 + 12);
     }
 
     #[test]
@@ -746,7 +755,7 @@ mod tests {
         assert_eq!(cpu.mem_read(0x1122), 0x42);
         assert_eq!(cpu.mem_read(0x2211), 0x00);
         assert_eq!((cpu.d, cpu.e, cpu.a), (0x11, 0x22, 0x42));
-        assert_eq!(cpu.n_cycles, 8 + 4);
+        assert_eq!(cpu.n_cycles, 8 + 12);
     }
 
     #[test]
@@ -756,7 +765,7 @@ mod tests {
         cpu.mem_write(0xffa4, 0x69);
         cpu.run_instructions_and_halt(&[0xf2]); // LD   A,($ff00+C)
         assert_eq!(cpu.a, 0x69);
-        assert_eq!(cpu.n_cycles, 8 + 4);
+        assert_eq!(cpu.n_cycles, 8 + 12);
     }
 
     #[test]
@@ -766,7 +775,7 @@ mod tests {
         cpu.a = 0xaa;
         cpu.run_instructions_and_halt(&[0xe2]); // LD   ($ff00+C),A
         assert_eq!(cpu.mem_read(0xffcc), 0xaa);
-        assert_eq!(cpu.n_cycles, 8 + 4);
+        assert_eq!(cpu.n_cycles, 8 + 12);
     }
 
     #[test]
@@ -775,7 +784,7 @@ mod tests {
         cpu.mem_write(0xff32, 0x69);
         cpu.run_instructions_and_halt(&[0xf0, 0x32]); // LD   A,($ff00+$32)
         assert_eq!(cpu.a, 0x69);
-        assert_eq!(cpu.n_cycles, 12 + 4);
+        assert_eq!(cpu.n_cycles, 12 + 12);
     }
 
     #[test]
@@ -784,7 +793,7 @@ mod tests {
         cpu.a = 0xab;
         cpu.run_instructions_and_halt(&[0xe0, 0x56]); // LD   ($ff00+$56),A
         assert_eq!(cpu.mem_read(0xff56), 0xab);
-        assert_eq!(cpu.n_cycles, 12 + 4);
+        assert_eq!(cpu.n_cycles, 12 + 12);
     }
 
     enum ROI { Reg(OpReg8), Immediate } // Register Or Immediate

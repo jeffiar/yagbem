@@ -244,7 +244,7 @@ impl Instruction {
         #[bitmatch]
         match opcode {
             "00_000_000" => ins(NoOp, 1, 4),
-            "01_110_110" => ins(Halt, 1, 4),
+            "01_110_110" => ins(Halt, 1, 12),
             "00_010_000" => ins(Stop, 1, 12),
 
             "11_001_011" => Self::decode_cb_opcode(fetch_imm8()),
