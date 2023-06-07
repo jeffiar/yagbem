@@ -8,13 +8,14 @@ pub use bus::Mem;
 use crate::opcodes::Instruction;
 use crate::cpu::Flags;
 
+use std::fmt;
 use std::io::BufReader;
 use std::fs::File;
 use serde_json::{Value};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-struct CpuStateInit {
+struct CpuStateNoIE {
     a: u8,
     b: u8,
     c: u8,
@@ -31,7 +32,7 @@ struct CpuStateInit {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-struct CpuStateFinal {
+struct CpuState {
     a: u8,
     b: u8,
     c: u8,
@@ -46,16 +47,16 @@ struct CpuStateFinal {
     ram: Vec<Vec<u16>>,
 }
 
-impl CpuStateFinal {
-    fn from_cpu(cpu: &Cpu) -> CpuStateFinal {
+impl CpuState {
+    fn from_cpu(cpu: &Cpu) -> CpuState {
         let mut ram = Vec::<Vec<u16>>::new();
-        for addr in 0x0000..0xffff {
+        for addr in 0x0000..=0xffff {
             let val = cpu.mem_read(addr);
             if val != 0 {
                 ram.push(vec![addr, val as u16]);
             }
         }
-        CpuStateFinal {
+        CpuState {
             a: cpu.a,
             b: cpu.b,
             c: cpu.c,
@@ -71,10 +72,31 @@ impl CpuStateFinal {
         }
     }
 
-    fn without_ram_zeros(&self) -> CpuStateFinal {
+    fn without_ram_zeros(&self) -> CpuState {
         let mut ret = self.clone();
         ret.ram.retain(|v| { v[1] != 0 } );
         ret
+    }
+}
+
+impl fmt::Display for CpuState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BC={:02x}{:02x}   ", self.b, self.c)?;
+        write!(f, "DE={:02x}{:02x}   ", self.d, self.e)?;
+        write!(f, "HL={:02x}{:02x}   ", self.h, self.l)?;
+        write!(f, "A={:02x}={:08b}  ", self.a, self.a)?;
+        write!(f, "F ={}{}{}{}   ", 
+               if self.f & (1 << 7) != 0 {"Z"} else {"_"},
+               if self.f & (1 << 6) != 0 {"N"} else {"_"},
+               if self.f & (1 << 5) != 0 {"H"} else {"_"},
+               if self.f & (1 << 4) != 0 {"C"} else {"_"})?;
+        write!(f, "PC={:04x}   ", self.pc)?;
+        write!(f, "SP={:04x}   ", self.sp)?;
+        write!(f, "IME={}  ", self.ime)?;
+        for v in self.ram.iter() {
+            write!(f, "[{:04x}]={:02x}", v[0], v[1])?;
+        }
+        Ok(())
     }
 }
 
@@ -82,8 +104,8 @@ impl CpuStateFinal {
 #[derive(Serialize, Deserialize, Debug)]
 struct Test {
     name: String,
-    initial: CpuStateInit,
-    r#final: CpuStateFinal,
+    initial: CpuStateNoIE,
+    r#final: CpuState,
     cycles: Vec<Value>,
 }
 
@@ -117,13 +139,11 @@ fn run_test(test: &Test) {
                                     || {cpu.mem_read(cpu.pc + 1)},
                                     || {cpu.mem_read(cpu.pc + 2)});
 
-    // println!("{}", test.name);
-    // println!("{:?}", test.initial);
-    // println!("{:?}", test.r#final);
+    let initial = CpuState::from_cpu(&cpu);
 
     cpu.execute_instruction(instr);
 
-    let cpu_final = CpuStateFinal::from_cpu(&cpu);
+    let cpu_final = CpuState::from_cpu(&cpu);
     let test_final = test.r#final.without_ram_zeros();
     let mut result: Result<(),String> = Ok(());
 
@@ -141,9 +161,9 @@ fn run_test(test: &Test) {
         println!("Test failed: {} ({})", test.name, instr);
         println!("Reason: {}", reason);
         println!("");
-        println!(" {:?}", test.initial);
-        println!("{:?}", test_final);
-        println!("{:?}", cpu_final);
+        println!("Initial:  {}", initial);
+        println!("Expected: {}", test_final);
+        println!("Found:    {}", cpu_final);
         std::process::exit(1);
     }
 }
