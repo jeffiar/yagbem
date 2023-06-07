@@ -35,7 +35,7 @@ pub struct Cpu {
 
     pub interrupt_master_enable: bool,
 
-    n_cycles: u64,
+    pub n_cycles: u64,
     pub n_instrs: u64,
     bus: Bus,
 }
@@ -327,11 +327,11 @@ impl Cpu {
     }
 
     pub fn run(&mut self) {
-        self.run_with_callback(|_| {});
+        self.run_with_callback(|_| {}, 1);
     }
 
     /// Run the CPU and run callback *before* each instruction executed
-    pub fn run_with_callback<F>(&mut self, mut callback: F) 
+    pub fn run_with_callback<F>(&mut self, mut callback: F, debug: u8) 
     where F: FnMut(&mut Cpu)
     {
         loop {
@@ -341,12 +341,14 @@ impl Cpu {
                                             || {self.mem_read(self.pc + 1)},
                                             || {self.mem_read(self.pc + 2)});
 
-            eprintln!("{:04x}: {:02x} {} {} {}", 
-                      self.pc,
-                      self.mem_read(self.pc),
-                      if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-                      if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-                      instr);
+            if debug > 0 {
+                eprintln!("{:04x}: {:02x} {} {} {}", 
+                          self.pc,
+                          self.mem_read(self.pc),
+                          if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
+                          if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
+                          instr);
+            }
 
             self.pc += instr.length;
             self.n_cycles += instr.cycles;
@@ -607,7 +609,7 @@ impl Cpu {
 
                 Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
                 Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-                Opcode::DecimalAdjustAcc => { break; } // TODO
+                Opcode::DecimalAdjustAcc => { panic!("Unimplemented instruction DAA"); } // TODO
                 Opcode::ComplementAcc => {
                     self.a = !self.a;
                     self.flags.insert(Flags::H | Flags::N);

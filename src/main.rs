@@ -1,8 +1,6 @@
-use std::env;
-use std::process;
 use std::fs;
+use std::time::SystemTime;
 
-use gbem::Config;
 use gbem::Cpu;
 use gbem::Mem;
 
@@ -12,17 +10,15 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::pixels::PixelFormatEnum;
 
+// const CYCLES_PER_SECOND: u64 = 4194304;
+const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
+
 const SCREEN_FULL_X: u32 = 256;
 const SCREEN_FULL_Y: u32 = 256;
 // const SCREEN_DISP_X = 160;
 // const SCREEN_DISP_Y = 144;
 
 const PIXEL_SCALE: f32 = 4.0;
-
-// want functions for:
-// [ ] tile map (showing VRAM as pixels)
-// - full screen (after drawing tiles)
-// - the scrolled portion of full screen
 
 // use sdl2::render::Canvas;
 // use sdl2::render::Texture;
@@ -40,24 +36,19 @@ const PIXEL_SCALE: f32 = 4.0;
     // canvas.present();
 // }
 
-fn handle_user_input(event_pump: &mut EventPump, mem_disp_start: &mut u16 ) {
+fn handle_user_input(event_pump: &mut EventPump) {
     for event in event_pump.poll_iter() {
         match event {
             Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                 std::process::exit(0);
             },
             Event::KeyDown { keycode: Some(Keycode::W), .. } => {
-                *mem_disp_start = mem_disp_start.saturating_sub(1);
             },
             Event::KeyDown { keycode: Some(Keycode::S), .. } => {
-                *mem_disp_start = mem_disp_start.saturating_add(1);
             },
             Event::KeyDown { keycode: Some(Keycode::A), .. } => {
-                *mem_disp_start = mem_disp_start.saturating_sub(512 * 16);
             },
             Event::KeyDown { keycode: Some(Keycode::D), .. } => {
-                *mem_disp_start = mem_disp_start.saturating_add(512 * 16);
-                // dbg!(*mem_disp_start);
             }
             _ => {/* do nothing */}
         };
@@ -75,11 +66,10 @@ fn color_num_to_rgb(color_num: u8) -> Color {
 }
 
 /// Returns true if this tile has changed and needs to be redrawn. // TODO cache this
-fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32) -> bool {
+fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32) {
     assert_eq!(tile_data.len(), 16);
     // eprintln!("x = {x}, y = {y}");
 
-    let mut changed = false;
     let mut out_idx: usize = (((x * out_height) + y) * 3) as usize;
     for row in 0..8 {
         let layer0 = tile_data[2*row];
@@ -96,33 +86,70 @@ fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: 
             }
 
             let (r,g,b) = color_num_to_rgb(color_num).rgb();
-            if out_rgb[out_idx] != r {
-                changed = true;
-                out_rgb[out_idx] = r;
-            }
-            if out_rgb[out_idx + 1] != g {
-                changed = true;
-                out_rgb[out_idx + 1] = g;
-            }
-            if out_rgb[out_idx + 2] != b {
-                changed = true;
-                out_rgb[out_idx + 2] = b;
-            }
+            out_rgb[out_idx] = r;
+            out_rgb[out_idx + 1] = g;
+            out_rgb[out_idx + 2] = b;
             out_idx += 3;
         }
         out_idx += 3 * (out_width - 8) as usize;
     }
-    changed
+}
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Turn debugging information on
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    debug: u8,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Execute a rom file
+    Run {
+        rom_file: String,
+        /// Don't initialize the display
+        #[arg(long)]
+        no_display: bool,
+    },
+
+    /// Run the jsmoo tests
+    TestMoo {
+        opcode: Option<String>,
+    }
 }
 
 fn main() {
-    let config = Config::build(env::args()).unwrap_or_else(|err| {
-        eprintln!("Problem parsing arguments: {err}");
-        process::exit(1);
-    });
+    let cli = Cli::parse();
 
-    let program = fs::read(config.rom_file_path).expect("Could not find rom file");
+    match &cli.command {
+        Some(Commands::Run { rom_file, no_display }) => {
+            run_rom_file(&rom_file, !no_display, cli.debug);
+        }
+        Some(Commands::TestMoo {opcode} ) => {
+            test_moo(opcode);
+        }
+        None => eprintln!("No command specified.")
+    }
+}
+
+fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
+    let program = fs::read(rom_file).expect("Could not find rom file");
     eprintln!("Read ROM successfully; {} bytes", program.len());
+
+    let mut cpu = Cpu::new();
+    cpu.load_rom(&program);
+    cpu.reset();
+
+    if !display {
+        cpu.run_with_callback(|_| {}, debug);
+        return;
+    }
 
     // initialize SDL2 (https://bugzmanov.github.io/nes_ebook/chapter_3_4.html)
     let sdl_context = sdl2::init().unwrap();
@@ -142,51 +169,52 @@ fn main() {
    let mut texture = creator
        .create_texture_target(PixelFormatEnum::RGB24, SCREEN_FULL_X, SCREEN_FULL_Y).unwrap();
 
-
     eprintln!("Initialized SDL2");
 
-    let mut cpu = Cpu::new();
-    cpu.load_rom(&program);
-    cpu.reset();
-
-    let mut mem_disp_start = 0x0000;
-
-    let callback = move |cpu: &mut Cpu| {
-        if cpu.n_instrs % 1000 != 0 {
+    let mut next_frame_n_cycle = 0;
+    let mut last_frame_time = SystemTime::now();
+    cpu.run_with_callback(move |cpu: &mut Cpu| {
+        if cpu.n_cycles < next_frame_n_cycle {
             return;
         }
-        eprint!(".");
+        next_frame_n_cycle += CYCLES_PER_FRAME;
 
-        handle_user_input(&mut event_pump, &mut mem_disp_start);
-        // render_tile_map(&cpu, &mut texture, &mut canvas);
+        let now = SystemTime::now();
+        eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
+        last_frame_time = now;
+
+        handle_user_input(&mut event_pump);
         let mut tile_map_rgb = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
 
-        let mut update = false;
-        let mut addr = mem_disp_start;
+        let mut addr = 0x9800;
+        // let mut tile_data = 0x8000;
         for x_tile in 0..32 {
             for y_tile in 0..32 {
-                let changed = paint_tile(&cpu.mem_read_range(addr, addr + 16), 
-                                       &mut tile_map_rgb, 
-                                       SCREEN_FULL_X,
-                                       SCREEN_FULL_Y,
-                                       x_tile * 8,
-                                       y_tile * 8);
-                if changed {
-                    update = true;
-                }
-                addr += 16;
+                let chr = cpu.mem_read(addr);
+                let tile_data = 0x8000 + (chr as u16 * 16);
+                // eprintln!("{x_tile},{y_tile}: {chr}");
+                paint_tile(&cpu.mem_read_range(tile_data, tile_data + 16), 
+                           &mut tile_map_rgb, 
+                           SCREEN_FULL_X,
+                           SCREEN_FULL_Y,
+                           x_tile * 8,
+                           y_tile * 8);
+                addr += 1;
+                // tile_data += 16;
             }
         }
 
-        if update {
-            texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
-            canvas.copy(&texture, None, None).unwrap();
-            canvas.present();
-        }
+        texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
+        canvas.copy(&texture, None, None).unwrap();
+        canvas.present();
 
         // ::std::thread::sleep(std::time::Duration::from_millis(20));
-    };
+    }, debug);
 
-    // cpu.run_with_callback(callback);
-    cpu.run();
+    eprintln!("Program terminated after {} cycles", cpu.n_cycles);
+    std::process::exit(0);
+}
+
+fn test_moo(opcode: &Option<String>) {
+    println!("Mooooo, opcode = {:?}", opcode);
 }

@@ -13,3 +13,4 @@ duplicate = "1.0.0"
 bitflags = "1.2.1"
 
 sdl2 = "0.35.2"
+clap = { version = "4.3.2", features = ["derive"] }
