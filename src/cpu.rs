@@ -531,7 +531,7 @@ impl Cpu {
             }
             Opcode::RRCA => {
                 self.a = self.a.rotate_right(1);
-                self.flags.set(Flags::C, (self.a & 0x0f) != 0);
+                self.flags.set(Flags::C, (self.a & 0x80) != 0);
                 self.flags.remove(Flags::H | Flags::N | Flags::Z);
             }
             Opcode::RLA => {

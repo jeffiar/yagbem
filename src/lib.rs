@@ -11,8 +11,10 @@ use crate::cpu::Flags;
 use std::fmt;
 use std::io::BufReader;
 use std::fs::File;
+
 use serde_json::{Value};
 use serde::{Deserialize, Serialize};
+use itertools::Itertools;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct CpuStateNoIE {
@@ -50,10 +52,10 @@ struct CpuState {
 impl CpuState {
     fn from_cpu(cpu: &Cpu) -> CpuState {
         let mut ram = Vec::<Vec<u16>>::new();
-        for addr in 0x0000..=0xffff {
-            let val = cpu.mem_read(addr);
+        for addr in cpu.bus.dirty_addrs().iter().sorted() {
+            let val = cpu.mem_read(*addr);
             if val != 0 {
-                ram.push(vec![addr, val as u16]);
+                ram.push(vec![*addr, val as u16]);
             }
         }
         CpuState {
