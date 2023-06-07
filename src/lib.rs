@@ -98,7 +98,7 @@ impl fmt::Display for CpuState {
         write!(f, "SP={:04x}   ", self.sp)?;
         write!(f, "IME={}  ", self.ime)?;
         for v in self.ram.iter() {
-            write!(f, "[{:04x}]={:02x}", v[0], v[1])?;
+            write!(f, "[{:04x}]={:02x} ", v[0], v[1])?;
         }
         Ok(())
     }
@@ -181,14 +181,20 @@ fn run_test(test: &Test, debug: u8) {
 
 fn test_opcode(opcode: &str, debug: u8) {
     let fname = format!("moo-tests/{}.json", opcode);
-    let f = File::open(fname).expect("Could not find test file");
-    let reader = BufReader::new(f);
-    let tests: Vec<Test> = serde_json::from_reader(reader).expect("Json parse failed");
+    match File::open(fname) {
+        Ok(f) => {
+            let reader = BufReader::new(f);
+            let tests: Vec<Test> = serde_json::from_reader(reader).expect("Json parse failed");
 
-    for test in tests.iter() {
-        run_test(test, debug);
+            for test in tests.iter() {
+                run_test(test, debug);
+            }
+            println!("Opcode {}: all tests passed.", opcode);
+        }
+        Err(_) => {
+            println!("Opcode {}: no test file found.", opcode);
+        }
     }
-    println!("Opcode {}: all tests passed.", opcode);
 }
 
 pub fn test_moo(opcode: &Option<String>, debug: u8) {
@@ -199,6 +205,11 @@ pub fn test_moo(opcode: &Option<String>, debug: u8) {
                 if opcode == 0x27 { // DAA
                     println!("Skipping opcode 0x27 (DAA)");
                     continue;
+                }
+                if opcode == 0xcb {
+                    for byte2 in 0..256 {
+                        test_opcode(&format!("cb {:02x}", byte2), debug);
+                    }
                 }
                 test_opcode(&format!("{:02x}", opcode), debug)
             }
