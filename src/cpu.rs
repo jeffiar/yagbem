@@ -1,4 +1,4 @@
-use crate::bus::{ Mem, Bus, };
+use crate::bus::{ Mem, Bus, Interrupt};
 use crate::opcodes::{
     Instruction,
     Opcode,
@@ -6,8 +6,8 @@ use crate::opcodes::{
     OpReg16,
     Condition,
 };
-use bitflags::bitflags;
 
+use bitflags::bitflags;
 bitflags! {
     // #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct Flags: u8 {
@@ -363,30 +363,48 @@ impl Cpu {
         out
     }
 
+    #[allow(non_snake_case)]
+    fn should_handle_interrupt(&self) -> Option<u16> {
+        if !self.interrupt_master_enable {
+            return None;
+        }
+        let iflags = self.bus.IE & self.bus.IF;
+        
+        if iflags.bits() != 0 {
+            if iflags.contains(Interrupt::VBLANK ) { return Some(0x40); }
+            if iflags.contains(Interrupt::LCDC   ) { return Some(0x48); }
+            if iflags.contains(Interrupt::TIMER  ) { return Some(0x50); }
+            if iflags.contains(Interrupt::SERIAL ) { return Some(0x58); }
+            if iflags.contains(Interrupt::INPUT )  { return Some(0x60); }
+        }
+        None
+    }
+
     pub fn run(&mut self) {
-        self.run_with_callback(|_| {}, 2);
+        self.run_with_callback(|_| {});
     }
 
     /// Run the CPU and run callback *before* each instruction executed
-    pub fn run_with_callback<F>(&mut self, mut callback: F, debug: u8) 
+    pub fn run_with_callback<F>(&mut self, mut callback: F) 
     where F: FnMut(&mut Cpu)
     {
-        self.running = true;
+        self.running = true; // TODO how does an interrupt wake up after halt?
         while self.running {
             callback(self);
+
+            if let Some(interrupt_handler_address) = self.should_handle_interrupt() {
+                self.interrupt_master_enable = false;
+                self.push_onto_stack(self.pc);
+                self.pc = interrupt_handler_address;
+                continue;
+            }
 
             let instr = Instruction::decode(self.mem_read(self.pc),
                                             || {self.mem_read(self.pc.wrapping_add(1))},
                                             || {self.mem_read(self.pc.wrapping_add(2))});
-            if debug >= 2 {
-                eprintln!("{:04x}: {:02x} {} {} {}", 
-                          self.pc,
-                          self.mem_read(self.pc),
-                          if instr.length >= 2 { format!("{:02x}", self.mem_read(self.pc + 1)) } else { "  ".to_string() },
-                          if instr.length == 3 { format!("{:02x}", self.mem_read(self.pc + 2)) } else { "  ".to_string() },
-                          instr);
-            }
             self.execute_instruction(instr);
+
+            self.bus.sync(self.n_cycles);
         }
     }
 
@@ -670,6 +688,75 @@ impl Cpu {
 
             Opcode::NotImplemented(opcode) => { panic!("Unimplemented opcode: {opcode:02x}")}
         }
+    }
+
+    pub fn display_instrs(&self, n_instrs: usize) -> Vec<String> {
+        let mut pc = self.pc;
+        let mut instrs = Vec::new();
+        for _ in 0..n_instrs {
+            let instr = Instruction::decode(self.mem_read(pc),
+                                            || {self.mem_read(pc.wrapping_add(1))},
+                                            || {self.mem_read(pc.wrapping_add(2))});
+            instrs.push(format!("{:04x}: {}", pc, instr));
+                          // self.mem_read(pc),
+                          // if instr.length >= 2 { format!("{:02x}", self.mem_read(pc + 1)) } else { "  ".to_string() },
+                          // if instr.length == 3 { format!("{:02x}", self.mem_read(pc + 2)) } else { "  ".to_string() },
+            pc += instr.length;
+        }
+        instrs
+    }
+
+    pub fn display_stack(&self, n_entries: usize) -> Vec<String> {
+        let mut sp = self.sp;
+        let mut entries = Vec::new();
+        let mut overflow = false;
+        for _ in 0..n_entries {
+            if !overflow {
+                entries.push(format!("{:04x}: {:04x}", sp, self.mem_read16(sp)));
+                (sp,overflow) = sp.overflowing_add(2);
+            } else {
+                entries.push(format!(""))
+            }
+        }
+        entries
+    }
+
+    pub fn display_regs_and_flags(&self, _length: usize) -> Vec<String> {
+        vec![
+            format!(" A = {:02x}", self.a),
+            format!("BC = {:02x}{:02x}", self.b, self.c),
+            format!("DE = {:02x}{:02x}", self.d, self.e),
+            format!("HL = {:02x}{:02x}", self.h, self.l),
+            format!(" F = {}{}{}{}", 
+                    if self.flags.contains(Flags::Z) {"Z"} else {"_"},
+                    if self.flags.contains(Flags::N) {"N"} else {"_"},
+                    if self.flags.contains(Flags::H) {"H"} else {"_"},
+                    if self.flags.contains(Flags::C) {"C"} else {"_"},
+                    ),
+            format!("IE = {:05b}", self.bus.IE),
+            format!("IF = {:05b}", self.bus.IF),
+            format!("IME= {}", self.interrupt_master_enable as usize),
+            format!("PC = {:04x}", self.pc),
+            format!("SP = {:04x}", self.sp),
+        ]
+    }
+
+    pub fn display_state(&self) -> Vec<String> {
+        let instr_trace: Vec<String> = self.display_instrs(10);
+        let stack_trace: Vec<String> = self.display_stack(10);
+        let registers: Vec<String> = self.display_regs_and_flags(10);
+        let mut more_info = vec![String::from(""); 10];
+        more_info[0] = format!("n_cycles: {}", self.n_cycles);
+        more_info[1] = format!("n_instrs: {}", self.n_instrs);
+
+        let mut out = Vec::new();
+        for (i,(instr, stack, reg, info)) in itertools::izip!(
+                &instr_trace, &stack_trace, &registers, &more_info).enumerate() {
+            let pc_arrow = if i == 0 { "PC->" } else { "" };
+            let sp_arrow = if i == 0 { "SP->" } else { "" };
+            out.push(format!("{:4}{:20}{:4}{:15}{:15}{}", pc_arrow, instr, sp_arrow, stack, reg, info));
+        }
+        out
     }
 }
 
@@ -1597,13 +1684,13 @@ mod tests {
     #[test]
     fn store_hli_a() {
         let mut cpu = Cpu::new_flat();
-        cpu.h = 0xff;
+        cpu.h = 0xaf;
         cpu.l = 0xff;
         cpu.a = 0x56;
         cpu.run_instructions_and_halt(&[0x22]); // LD (HL+),A
-        assert_eq!(cpu.mem_read(0xffff), 0x56);
-        assert_eq!(cpu.h, 0);
-        assert_eq!(cpu.l, 0);
+        assert_eq!(cpu.mem_read(0xafff), 0x56);
+        assert_eq!(cpu.h, 0xb0);
+        assert_eq!(cpu.l, 0x00);
     }
 
     #[test]

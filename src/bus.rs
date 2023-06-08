@@ -1,6 +1,9 @@
 use std::io::{stderr, Write};
 
-mod register {
+const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
+
+#[allow(dead_code)]
+pub mod register {
     pub const P1   : u16 = 0xFF00; // Joypad input
     pub const SB   : u16 = 0xFF01; // Serial transfer data
     pub const SC   : u16 = 0xFF02; // Serial transfer control
@@ -45,6 +48,20 @@ mod register {
     pub const NR52 : u16 = 0xFF26; // Sound on-off
 }
 
+
+use bitflags::bitflags;
+
+bitflags! {
+    pub struct Interrupt: u8 {
+        const VBLANK = 1 << 4; // Vertical Blanking
+        const LCDC   = 1 << 3; // LCDC (STAT referenced)
+        const TIMER  = 1 << 2; // Timer Overflow
+        const SERIAL = 1 << 1; // Serial I/O Transfer Completion
+        const INPUT  = 1 << 0; // P10-P13 Terminal Negative Edge
+    }
+}
+
+
 pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
     fn mem_write(&mut self, addr: u16, val: u8);
@@ -65,17 +82,30 @@ pub trait Mem {
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8];
 }
 
+
+#[allow(non_snake_case)]
 pub struct Bus {
-    mem: [u8; 0x10000],
-    dirty_addrs: Vec<u16>,
+    pub mem: [u8; 0x10000],
+    pub dirty_addrs: Vec<u16>,
+    pub IE: Interrupt,
+    pub IF: Interrupt,
+
+    n_cycles: u64,
+    next_vblank_n_cyc: u64,
 }
 
 impl Mem for Bus {
     fn mem_read(&self, addr: u16) -> u8 { 
-        self.mem[addr as usize] 
+        match addr {
+            register::IE => self.IE.bits(),
+            register::IF => self.IF.bits(),
+            _ => self.mem[addr as usize] ,
+        }
     }
     fn mem_write(&mut self, addr: u16, val: u8) { 
         match addr {
+            register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
+            register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::SC => { 
                 // Print the serial transfer byte as ASCII character to stderr
                 if (val & 0xf0) != 0 {
@@ -97,14 +127,20 @@ impl Mem for Bus {
 
 impl Bus {
     pub fn new() -> Bus {
-        let bus = Bus { 
+        let mut bus = Bus { 
             mem: [0; 0x10000],
             dirty_addrs: Vec::new(),
-        }
+            IE: Interrupt::empty(),
+            IF: Interrupt::empty(),
+            n_cycles: 0,
+            next_vblank_n_cyc: CYCLES_PER_FRAME,
+        };
+        bus.mem_write(register::LCDC, 0x83);
+        bus
     }
 
     pub fn reset(&mut self) {
-        self.mem = [0; 0x10000]
+        *self = Bus::new();
     }
 
     pub fn load(&mut self, program: &[u8], start: u16) {
@@ -121,6 +157,14 @@ impl Bus {
 
     pub fn dirty_addrs(&self) -> &Vec<u16> {
         &self.dirty_addrs
+    }
+
+    pub fn sync(&mut self, n_cycles: u64) {
+        if n_cycles >= self.next_vblank_n_cyc {
+            self.next_vblank_n_cyc += CYCLES_PER_FRAME;
+            self.IE.insert(Interrupt::VBLANK);
+        };
+        self.n_cycles = n_cycles;
     }
 }
 

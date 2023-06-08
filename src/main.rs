@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{stdin, stdout, Write};
 // use std::time::SystemTime;
 
 use gbem::Cpu;
@@ -100,10 +101,6 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Turn debugging information on
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    debug: u8,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -114,31 +111,109 @@ enum Commands {
     Run {
         rom_file: String,
         /// Don't initialize the display
-        #[arg(long)]
-        no_display: bool,
+        #[arg(long, short)]
+        debug: bool,
     },
 
     /// Run the jsmoo tests
     TestMoo {
         opcode: Option<String>,
+        #[arg(long, short)]
+        debug: bool,
     }
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    match &cli.command {
-        Some(Commands::Run { rom_file, no_display }) => {
-            run_rom_file(&rom_file, !no_display, cli.debug);
+    match cli.command {
+        Some(Commands::Run { rom_file, debug }) => {
+            run_rom_file(&rom_file, debug);
         }
-        Some(Commands::TestMoo {opcode} ) => {
-            gbem::test_moo(opcode, cli.debug);
+        Some(Commands::TestMoo {opcode, debug } ) => {
+            gbem::test_moo(&opcode, debug);
         }
         None => eprintln!("No command specified.")
     }
 }
 
-fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
+#[derive(Clone, Copy)]
+enum DebugCommand {
+    RepeatLastCommand,
+    Next(usize),
+    Continue,
+    Breakpoint(u16),
+    Delete(Option<usize>),
+}
+
+fn read_debugger_command() -> DebugCommand {
+    print!("(gbdb) ");
+    stdout().flush().expect("failed to flush stdout");
+    let mut input = String::new();
+    stdin().read_line(&mut input).expect("Failed to read input string");
+
+    let mut words = input.trim().split_whitespace();
+    match words.next() {
+        None => DebugCommand::RepeatLastCommand,
+        Some("n") | Some("next") => {
+            match words.next() {
+                None => DebugCommand::Next(1),
+                Some(n) => {
+                    match n.parse() {
+                        Ok(n) => DebugCommand::Next(n),
+                        Err(e) => {
+                            println!("Misformatted next command: {}", e);
+                            read_debugger_command()
+                        }
+                    }
+                }
+            }
+        },
+        Some("c") | Some("continue") => {
+            DebugCommand::Continue
+        },
+        Some("b") | Some("break") | Some("breakpoint") => {
+            match words.next() {
+                None => {
+                    println!("breakpoint not specified");
+                    read_debugger_command()
+                }
+                Some(n) => {
+                    match u16::from_str_radix(n, 16) {
+                        Ok(n) => DebugCommand::Breakpoint(n),
+                        Err(e) => {
+                            println!("Misformatted breakpoint: {}", e);
+                            read_debugger_command()
+                        }
+                    }
+                }
+            }
+        }
+        Some("d") | Some("del") | Some("delete") => {
+            match words.next() {
+                None => {
+                    DebugCommand::Delete(None)
+                }
+                Some(n) => {
+                    match n.parse() {
+                        Ok(n) => DebugCommand::Delete(Some(n)),
+                        Err(e) => {
+                            println!("Misformatted delete command: {}", e);
+                            read_debugger_command()
+                        }
+                    }
+                }
+            }
+        }
+        Some(unknown) => { 
+            println!("Unrecognized command: {}", unknown); 
+            read_debugger_command() 
+        }
+    }
+
+}
+
+fn run_rom_file(rom_file: &str, debug: bool) {
     let program = fs::read(rom_file).expect("Could not find rom file");
     eprintln!("Read ROM successfully; {} bytes", program.len());
 
@@ -147,21 +222,83 @@ fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
     cpu.reset();
 
 
-    if !display {
-        let mut next_frame_n_cycle = 0;
-        // let mut last_frame_time = SystemTime::now();
+    let mut last_command = DebugCommand::Next(1);
+    let mut next_counter: Option<usize> = Some(0);
+    let mut breakpoints: Vec<u16> = Vec::new();
+
+    if debug {
+        // Don't include the display for now...
         cpu.run_with_callback(move |cpu: &mut Cpu| {
-            if cpu.n_cycles < next_frame_n_cycle {
+            let mut should_break = false;
+            let mut break_reason: Vec<String> = vec![];
+            match next_counter {
+                Some(0) => {
+                    should_break = true;
+                    next_counter = None;
+                }
+                Some(n) => {
+                    next_counter = Some(n - 1);
+                }
+                None => { }
+            }
+            for (i,b) in breakpoints.iter().enumerate() {
+                if cpu.pc == *b {
+                    should_break = true;
+                    break_reason.push(format!("Breakpoint {} at {:04x}.", i, *b));
+                }
+            }
+
+            if !should_break {
                 return;
             }
-            next_frame_n_cycle += CYCLES_PER_FRAME;
 
-            // let now = SystemTime::now();
-            // if debug >= 1 {
-                // eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
-            // }
-            // last_frame_time = now;
-        }, debug);
+            print!("{esc}c", esc = 27 as char); // clear screen
+            for line in cpu.display_state() {
+                println!("{}", line);
+            }
+            for line in break_reason {
+                println!("{}", line);
+            }
+            
+            loop {
+                let command =  read_debugger_command();
+
+                let command_to_run = match command {
+                    DebugCommand::RepeatLastCommand => { last_command },
+                    _ => { last_command = command; command },
+                };
+
+                use DebugCommand::*;
+                match command_to_run {
+                    Next(n_repeats) => { 
+                        next_counter = Some(n_repeats - 1);
+                        return;
+                    },
+                    Continue => { 
+                        next_counter = None;
+                        return;
+                    }
+                    Breakpoint(addr) => { 
+                        breakpoints.push(addr);
+                        println!("Breakpoint {}: 0x{:04x} set.", breakpoints.len(), addr);
+                    }
+                    Delete(Some(n)) => { 
+                        if n >= breakpoints.len() {
+                            println!("Breakpoint {} not found.", n);
+                            continue;
+                        }
+                        let addr = breakpoints[n];
+                        breakpoints.remove(n);
+                        println!("Deleted breakpoint {}: 0x{:04x}.", breakpoints.len(), addr);
+                    }
+                    Delete(None) => {
+                        breakpoints.clear();
+                        println!("All breakpoints deleted.");
+                    }
+                    RepeatLastCommand => { unreachable!(); },
+                }
+            }
+        });
     }
 
     // initialize SDL2 (https://bugzmanov.github.io/nes_ebook/chapter_3_4.html)
@@ -227,7 +364,7 @@ fn run_rom_file(rom_file: &str, display: bool, debug: u8) {
         // eprintln!("Canvas update time: {}", t3.duration_since(t2).expect("Time went backwards").as_millis());
 
         // ::std::thread::sleep(std::time::Duration::from_millis(20));
-    }, debug);
+    });
 
     eprintln!("Program terminated after {} cycles", cpu.n_cycles);
     std::process::exit(0);

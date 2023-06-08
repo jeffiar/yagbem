@@ -117,7 +117,7 @@ struct Test {
     cycles: Vec<Value>,
 }
 
-fn run_test(test: &Test, debug: u8) {
+fn run_test(test: &Test, debug: bool) {
     // Set up processor
     let mut cpu = Cpu {
         a : test.initial.a,
@@ -150,7 +150,7 @@ fn run_test(test: &Test, debug: u8) {
     let initial = CpuState::from_cpu(&cpu);
     let test_final = test.r#final.without_ram_zeros();
 
-    if debug >= 2 {
+    if debug {
         println!("Test {}: ({})", test.name, instr);
         println!("Initial:  {}", initial);
         println!("Expected: {}", test_final);
@@ -185,7 +185,7 @@ fn run_test(test: &Test, debug: u8) {
     }
 }
 
-fn test_opcode(opcode: &str, debug: u8) {
+fn test_opcode(opcode: &str, debug: bool) {
     let fname = format!("moo-tests/{}.json", opcode);
     match File::open(fname) {
         Ok(f) => {
@@ -203,7 +203,7 @@ fn test_opcode(opcode: &str, debug: u8) {
     }
 }
 
-pub fn test_moo(opcode: &Option<String>, debug: u8) {
+pub fn test_moo(opcode: &Option<String>, debug: bool) {
     match opcode {
         Some(opcode) => { test_opcode(opcode, debug); }
         None => {
