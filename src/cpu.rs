@@ -333,6 +333,7 @@ impl Cpu {
         self.flags.set(Flags::Z, val == 0);
     }
 
+    #[allow(non_snake_case)]
     fn daa(&mut self, val: u8) -> u8 {
         // I cheated a little and used this pseudocode:
         // https://ehaskins.com/2018-01-30%20Z80%20DAA/
