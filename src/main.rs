@@ -138,15 +138,18 @@ fn main() {
 }
 
 #[derive(Clone, Copy)]
-enum DebugCommand {
+enum DebugCommand<'a> {
     RepeatLastCommand,
     Next(usize),
     Continue,
-    Breakpoint(u16),
+    Break(u16),
+    Watch(u16),
+    WatchReg(&'a str),
+    Info,
     Delete(Option<usize>),
 }
 
-fn read_debugger_command() -> DebugCommand {
+fn read_debugger_command() -> DebugCommand<'static> {
     print!("(gbdb) ");
     stdout().flush().expect("failed to flush stdout");
     let mut input = String::new();
@@ -180,7 +183,7 @@ fn read_debugger_command() -> DebugCommand {
                 }
                 Some(n) => {
                     match u16::from_str_radix(n, 16) {
-                        Ok(n) => DebugCommand::Breakpoint(n),
+                        Ok(n) => DebugCommand::Break(n),
                         Err(e) => {
                             println!("Misformatted breakpoint: {}", e);
                             read_debugger_command()
@@ -205,12 +208,46 @@ fn read_debugger_command() -> DebugCommand {
                 }
             }
         }
+        Some("w") | Some("watch") | Some("watchpoint") => {
+            match words.next() {
+                None => {
+                    println!("watchpoint not specified");
+                    read_debugger_command()
+                }
+                Some("SP") | Some("sp") => { DebugCommand::WatchReg("SP") }
+                Some(n) => {
+                    match u16::from_str_radix(n, 16) {
+                        Ok(n) => DebugCommand::Watch(n),
+                        Err(e) => {
+                            println!("Misformatted watchpoint: {}", e);
+                            read_debugger_command()
+                        }
+                    }
+                }
+            }
+        }
+        Some("i") | Some("info") => {
+            match words.next() {
+                None => { DebugCommand::Info },
+                Some(_) => {
+                    println!("Info command takes no arguments (for now)");
+                    read_debugger_command()
+                }
+            }
+        }
         Some(unknown) => { 
             println!("Unrecognized command: {}", unknown); 
             read_debugger_command() 
         }
     }
 
+}
+
+enum Breakpoint {
+    Instr(u16),
+    Mem(u16, u8),
+    SP(u16),
+    Deleted,
 }
 
 fn run_rom_file(rom_file: &str, debug: bool) {
@@ -224,7 +261,8 @@ fn run_rom_file(rom_file: &str, debug: bool) {
 
     let mut last_command = DebugCommand::Next(1);
     let mut next_counter: Option<usize> = Some(0);
-    let mut breakpoints: Vec<u16> = Vec::new();
+    let mut breakpoints: Vec<Breakpoint> = Vec::new();
+    // let mut watchpoints: Vec<(u16,u8)> = Vec::new();
 
     if debug {
         // Don't include the display for now...
@@ -241,13 +279,34 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                 }
                 None => { }
             }
-            for (i,b) in breakpoints.iter().enumerate() {
-                if cpu.pc == *b {
-                    should_break = true;
-                    break_reason.push(format!("Breakpoint {} at {:04x}.", i, *b));
+
+            for (i,b) in breakpoints.iter_mut().enumerate() {
+                match b {
+                    Breakpoint::Instr(addr) => {
+                        if cpu.pc == *addr {
+                            should_break = true;
+                            break_reason.push(format!("Breakpoint {} at {:04x}.", i, *addr));
+                        }
+                    },
+                    Breakpoint::Mem(addr, val) => {
+                        if cpu.mem_read(*addr) != *val {
+                            should_break = true;
+                            break_reason.push(format!("Watchpoint {} at [{:04x}] (old = {:02x}, cur = {:02x})",
+                                                      i, addr, *val, cpu.mem_read(*addr)));
+                            *val = cpu.mem_read(*addr);
+                        }
+                    }
+                    Breakpoint::SP(val) => {
+                        if cpu.sp != *val {
+                            should_break = true;
+                            break_reason.push(format!("Watchpoint {} of SP (old = {:02x}, cur = {:02x})",
+                                                      i, *val, cpu.sp));
+                            *val = cpu.sp;
+                        }
+                    }
+                    Breakpoint::Deleted => { }
                 }
             }
-
             if !should_break {
                 return;
             }
@@ -278,18 +337,50 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                         next_counter = None;
                         return;
                     }
-                    Breakpoint(addr) => { 
-                        breakpoints.push(addr);
-                        println!("Breakpoint {}: 0x{:04x} set.", breakpoints.len(), addr);
+                    Break(addr) => { 
+                        breakpoints.push(Breakpoint::Instr(addr));
+                        println!("Breakpoint {}: 0x{:04x}.", breakpoints.len(), addr);
+                    }
+                    Watch(addr) => { 
+                        breakpoints.push(Breakpoint::Mem(addr, cpu.mem_read(addr)));
+                        println!("Watchpoint {}: [{:04x}] (cur = {:02x}).",
+                                 breakpoints.len(), addr, cpu.mem_read(addr));
+                    }
+                    WatchReg("SP") => {
+                        breakpoints.push(Breakpoint::SP(cpu.sp));
+                        println!("Watchpoint {}: SP (cur = {:02x}).",
+                                  breakpoints.len(), cpu.sp);
+                    }
+                    WatchReg(_) => {
+                        println!("Misformatted watchpoint command.")
                     }
                     Delete(Some(n)) => { 
                         if n >= breakpoints.len() {
                             println!("Breakpoint {} not found.", n);
                             continue;
                         }
-                        let addr = breakpoints[n];
-                        breakpoints.remove(n);
-                        println!("Deleted breakpoint {}: 0x{:04x}.", breakpoints.len(), addr);
+                        breakpoints[n] = Breakpoint::Deleted;
+                        println!("Deleted breakpoint {}.", n);
+                    }
+                    Info => {
+                        if breakpoints.len() == 0 {
+                            println!("No breakpoints");
+                            continue;
+                        }
+                        for (i,b) in breakpoints.iter().enumerate() {
+                            match b {
+                                Breakpoint::Instr(addr) => {
+                                    println!("Breakpoint {}: {:04x}", i, addr);
+                                },
+                                Breakpoint::Mem(addr, _) => {
+                                    println!("Watchpoint {}: [{:04x}] (cur = {:02x}).", i, addr, cpu.mem_read(*addr));
+                                }
+                                Breakpoint::SP(_) => {
+                                    println!("Watchpoint {}: SP (cur = {:02x}).", i, cpu.sp);
+                                }
+                                Breakpoint::Deleted => { }
+                            }
+                        }
                     }
                     Delete(None) => {
                         breakpoints.clear();
