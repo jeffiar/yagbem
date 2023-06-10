@@ -18,6 +18,17 @@ bitflags! {
     }
 }
 
+impl Condition {
+    fn matches(&self, flags: Flags) -> bool {
+        match self {
+            Condition::NZ => { !flags.contains(Flags::Z) },
+            Condition::Z => { flags.contains(Flags::Z) },
+            Condition::NC => { !flags.contains(Flags::C) },
+            Condition::C => { flags.contains(Flags::C) },
+        }
+    }
+}
+
 pub const PC_START: u16 = 0x0100;
 pub const SP_START: u16 = 0xfffe;
 
@@ -59,17 +70,6 @@ fn add_relative(addr: u16, offset: i8) -> u16 {
     ((addr as i32) + (offset as i32)) as u16
 }
 
-impl Condition {
-    fn matches(&self, flags: Flags) -> bool {
-        match self {
-            Condition::NZ => { !flags.contains(Flags::Z) },
-            Condition::Z => { flags.contains(Flags::Z) },
-            Condition::NC => { !flags.contains(Flags::C) },
-            Condition::C => { flags.contains(Flags::C) },
-        }
-    }
-}
-
 impl Cpu {
     pub fn new() -> Self {
         Cpu {
@@ -109,7 +109,6 @@ impl Cpu {
         self.interrupt_master_enable = false;
         self.n_instrs = 0;
         self.n_cycles = 0;
-        // self.bus.reset();
     }
 
     pub fn load_rom(&mut self, program: &[u8]) {
@@ -182,23 +181,6 @@ impl Cpu {
             OpReg16::HLDec => { unreachable!() },
         }
     }
-
-    // fn reg8_write_bit(&mut self, reg: OpReg8, bit: u8, val: bool) {
-    //     // A little ugly, but I in case I want to keep a separate case for HLIndirect
-    //     match reg {
-    //         OpReg8::A => { if val {self.a |= (1 << bit)} else {self.a &= !(1 << bit)} }
-    //         OpReg8::B => { if val {self.b |= (1 << bit)} else {self.b &= !(1 << bit)} }
-    //         OpReg8::C => { if val {self.c |= (1 << bit)} else {self.c &= !(1 << bit)} }
-    //         OpReg8::D => { if val {self.d |= (1 << bit)} else {self.d &= !(1 << bit)} }
-    //         OpReg8::E => { if val {self.e |= (1 << bit)} else {self.e &= !(1 << bit)} }
-    //         OpReg8::H => { if val {self.h |= (1 << bit)} else {self.h &= !(1 << bit)} }
-    //         OpReg8::L => { if val {self.l |= (1 << bit)} else {self.l &= !(1 << bit)} }
-    //         OpReg8::HLIndirect => {
-    //             let hl = (self.h as u16) << 8 | self.l as u16;
-    //             self.bus.mem_write_bit(hl, bit, val);
-    //         }
-    //     }
-    // }
 
     fn add_instr(&mut self, op1: u8, op2: u8, destination: OpReg8, modify_carry: bool) {
         let sum16 = (op1 as u16).wrapping_add(op2 as u16);
@@ -364,7 +346,7 @@ impl Cpu {
     }
 
     #[allow(non_snake_case)]
-    fn should_handle_interrupt(&self) -> Option<u16> {
+    fn poll_irq(&self) -> Option<u16> {
         if !self.interrupt_master_enable {
             return None;
         }
@@ -398,7 +380,7 @@ impl Cpu {
         while self.running {
             callback(self);
 
-            if let Some(interrupt_handler_address) = self.should_handle_interrupt() {
+            if let Some(interrupt_handler_address) = self.poll_irq() {
                 self.interrupt_master_enable = false;
                 self.push_onto_stack(self.pc);
                 self.pc = interrupt_handler_address;
@@ -676,7 +658,7 @@ impl Cpu {
 
             Opcode::DisableInterrupts => { self.interrupt_master_enable = false; }
             Opcode::EnableInterrupts => { self.interrupt_master_enable = true; }
-            Opcode::DecimalAdjustAcc => { self.a = self.daa(self.a); } // TODO
+            Opcode::DecimalAdjustAcc => { self.a = self.daa(self.a); }
             Opcode::ComplementAcc => {
                 self.a = !self.a;
                 self.flags.insert(Flags::H | Flags::N);

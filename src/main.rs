@@ -1,8 +1,7 @@
 use std::fs;
-use std::io::{stdin, stdout, Write};
 // use std::time::SystemTime;
 
-use gbem::{Cpu, Mem, Instruction, Opcode};
+use gbem::{Cpu, Mem, run_debugger};
 
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -19,22 +18,6 @@ const SCREEN_FULL_Y: u32 = 256;
 // const SCREEN_DISP_Y = 144;
 
 const PIXEL_SCALE: f32 = 3.0;
-
-// use sdl2::render::Canvas;
-// use sdl2::render::Texture;
-// use sdl2::video::Window;
-// fn render_tile_map<'a>(cpu: &Cpu, texture: &mut Texture<'a>, canvas: &mut Canvas<Window>) {
-    // let mut tile_map_rgb = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
-
-    // if (cpu.n_instrs / 10) % 2 == 0 {
-    //     eprintln!("Updating tile map");
-    //     tile_map_rgb = [0xff as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
-    // }
-
-    // texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
-    // canvas.copy(&texture, None, None).unwrap();
-    // canvas.present();
-// }
 
 fn handle_user_input(event_pump: &mut EventPump) {
     for event in event_pump.poll_iter() {
@@ -65,10 +48,8 @@ fn color_num_to_rgb(color_num: u8) -> Color {
     }
 }
 
-/// Returns true if this tile has changed and needs to be redrawn. // TODO cache this
 fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32) {
     assert_eq!(tile_data.len(), 16);
-    // eprintln!("x = {x}, y = {y}");
 
     let mut out_idx: usize = (((x * out_height) + y) * 3) as usize;
     for row in 0..8 {
@@ -76,7 +57,6 @@ fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: 
         let layer1 = tile_data[2*row+1];
 
         for col in 0..8 {
-            // eprintln!("row = {row}, col = {col}, idx = {out_idx}");
             let mut color_num: u8 = 0;
             if layer0 & (1 << (7 - col)) != 0{
                 color_num |= 0b01;
@@ -94,6 +74,24 @@ fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: 
         out_idx += 3 * (out_width - 8) as usize;
     }
 }
+
+fn draw_tile_map(cpu: &Cpu, tile_map_rgb: &mut [u8]) {
+    let mut addr = 0x9800;
+    for x_tile in 0..32 {
+        for y_tile in 0..32 {
+            let chr = cpu.mem_read(addr);
+            let tile_data = 0x8000 + (chr as u16 * 16);
+            paint_tile(&cpu.mem_read_range(tile_data, tile_data + 16), 
+                       tile_map_rgb, 
+                       SCREEN_FULL_X,
+                       SCREEN_FULL_Y,
+                       x_tile * 8,
+                       y_tile * 8);
+            addr += 1;
+        }
+    }
+}
+
 
 use clap::{Parser, Subcommand};
 
@@ -139,119 +137,6 @@ fn main() {
     }
 }
 
-#[derive(Clone, Copy)]
-enum DebugCommand<'a> {
-    RepeatLastCommand,
-    Next(usize),
-    Continue,
-    Break(u16),
-    Watch(u16),
-    WatchReg(&'a str),
-    Info,
-    Delete(Option<usize>),
-}
-
-fn read_debugger_command() -> DebugCommand<'static> {
-    print!("(gbdb) ");
-    stdout().flush().expect("failed to flush stdout");
-    let mut input = String::new();
-    stdin().read_line(&mut input).expect("Failed to read input string");
-
-    let mut words = input.trim().split_whitespace();
-    match words.next() {
-        None => DebugCommand::RepeatLastCommand,
-        Some("n") | Some("next") => {
-            match words.next() {
-                None => DebugCommand::Next(1),
-                Some(n) => {
-                    match n.parse() {
-                        Ok(n) => DebugCommand::Next(n),
-                        Err(e) => {
-                            println!("Misformatted next command: {}", e);
-                            read_debugger_command()
-                        }
-                    }
-                }
-            }
-        },
-        Some("c") | Some("continue") => {
-            DebugCommand::Continue
-        },
-        Some("b") | Some("break") | Some("breakpoint") => {
-            match words.next() {
-                None => {
-                    println!("breakpoint not specified");
-                    read_debugger_command()
-                }
-                Some(n) => {
-                    match u16::from_str_radix(n, 16) {
-                        Ok(n) => DebugCommand::Break(n),
-                        Err(e) => {
-                            println!("Misformatted breakpoint: {}", e);
-                            read_debugger_command()
-                        }
-                    }
-                }
-            }
-        }
-        Some("d") | Some("del") | Some("delete") => {
-            match words.next() {
-                None => {
-                    DebugCommand::Delete(None)
-                }
-                Some(n) => {
-                    match n.parse() {
-                        Ok(n) => DebugCommand::Delete(Some(n)),
-                        Err(e) => {
-                            println!("Misformatted delete command: {}", e);
-                            read_debugger_command()
-                        }
-                    }
-                }
-            }
-        }
-        Some("w") | Some("watch") | Some("watchpoint") => {
-            match words.next() {
-                None => {
-                    println!("watchpoint not specified");
-                    read_debugger_command()
-                }
-                Some("SP") | Some("sp") => { DebugCommand::WatchReg("SP") }
-                Some(n) => {
-                    match u16::from_str_radix(n, 16) {
-                        Ok(n) => DebugCommand::Watch(n),
-                        Err(e) => {
-                            println!("Misformatted watchpoint: {}", e);
-                            read_debugger_command()
-                        }
-                    }
-                }
-            }
-        }
-        Some("i") | Some("info") => {
-            match words.next() {
-                None => { DebugCommand::Info },
-                Some(_) => {
-                    println!("Info command takes no arguments (for now)");
-                    read_debugger_command()
-                }
-            }
-        }
-        Some(unknown) => { 
-            println!("Unrecognized command: {}", unknown); 
-            read_debugger_command() 
-        }
-    }
-
-}
-
-enum Breakpoint {
-    Instr(u16),
-    Mem(u16, u8),
-    SP(u16),
-    Deleted,
-}
-
 fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
     let program = fs::read(rom_file).expect("Could not find rom file");
     eprintln!("Read ROM successfully; {} bytes", program.len());
@@ -272,182 +157,8 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
     }
 
     if debug {
-        // Use the debugger, without graphical display for now
-
-        let mut last_command = DebugCommand::Next(1);
-        let mut next_counter: Option<usize> = Some(0);
-        let mut breakpoints: Vec<Breakpoint> = Vec::new();
-        let mut last_dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
-        let mut stack_start: u16 = 0xfffe;
-        let mut old_sp: u16 = 0xfffe;
-
-        cpu.run_with_callback(move |cpu: &mut Cpu| {
-
-            let mut should_break = false;
-            let mut break_reason: Vec<String> = vec![];
-            match next_counter {
-                Some(0) => {
-                    should_break = true;
-                    next_counter = None;
-                }
-                Some(n) => {
-                    next_counter = Some(n - 1);
-                }
-                None => { }
-            }
-
-            for (i,b) in breakpoints.iter_mut().enumerate() {
-                match b {
-                    Breakpoint::Instr(addr) => {
-                        if cpu.pc == *addr {
-                            should_break = true;
-                            break_reason.push(format!("Breakpoint {} at {:04x}.", i, *addr));
-                        }
-                    },
-                    Breakpoint::Mem(addr, val) => {
-                        if cpu.mem_read(*addr) != *val {
-                            should_break = true;
-                            break_reason.push(format!("Watchpoint {} at [{:04x}] (old = {:02x}, cur = {:02x})",
-                                                      i, addr, *val, cpu.mem_read(*addr)));
-                            *val = cpu.mem_read(*addr);
-                        }
-                    }
-                    Breakpoint::SP(val) => {
-                        if cpu.sp != *val {
-                            should_break = true;
-                            break_reason.push(format!("Watchpoint {} of SP (old = {:04x}, cur = {:04x}",
-                                                      i, *val, cpu.sp));
-                            *val = cpu.sp;
-                        }
-                    }
-                    Breakpoint::Deleted => { }
-                }
-            }
-            if !should_break {
-                return;
-            }
-
-            print!("{esc}c", esc = 27 as char); // clear screen
-
-            // Determine a reasonable range of instructions to display
-            let mut dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
-            for i in 0..10 {
-                if cpu.pc == last_dissembly[i].0 {
-                    match i {
-                        0..=6  => { dissembly = last_dissembly.clone(); }
-                        7..=9 => { dissembly = cpu.disassemble(last_dissembly[i - 6].0, 10); }
-                        _ => { unreachable!(); }
-                    }
-                    break;
-                }
-            }
-            last_dissembly = dissembly.clone();
-            // Determine a good guess for the start of stack
-            if cpu.sp != old_sp.wrapping_add(2) && cpu.sp != old_sp.wrapping_sub(2) && cpu.sp != old_sp {
-                stack_start = cpu.sp;
-            }
-            old_sp = cpu.sp;
-
-
-            let registers: Vec<String> = cpu.display_regs_and_flags(10);
-            let mut more_info = vec![String::from(""); 10];
-            more_info[0] = format!("n_cycles: {}", cpu.n_cycles);
-            more_info[1] = format!("n_instrs: {}", cpu.n_instrs);
-
-            for i in 0..10usize {
-                let (pc,instr) = dissembly[i];
-                let sp = stack_start - 2 * (10 - 1 - i as u16);
-                let pc_arrow = if pc == cpu.pc { "PC->" } else { "" };
-                let sp_arrow = if sp == cpu.sp { "SP->" } else { "" };
-
-                let mut instr_str = instr.to_string();
-                match instr.opcode {
-                    Opcode::JumpRelative(e) | Opcode::JumpCondRelative(_,e) => { 
-                        instr_str.push_str(&format!("=${:04x}", 2 + pc as i32 + e as i32))
-                    },
-                    _ => { }
-                }
-                print!("{:4}{:04x}: {:20}", 
-                         pc_arrow, pc, instr_str);
-                print!("{:4}{:04x}: {:04x}    ",
-                         sp_arrow, sp, cpu.mem_read16(sp));
-                println!("{:15}{}", registers[i], more_info[i]);
-            }
-            for line in break_reason {
-                println!("{}", line);
-            }
-            
-            loop {
-                let command =  read_debugger_command();
-
-                let command_to_run = match command {
-                    DebugCommand::RepeatLastCommand => { last_command },
-                    _ => { last_command = command; command },
-                };
-
-                use DebugCommand::*;
-                match command_to_run {
-                    Next(n_repeats) => { 
-                        next_counter = Some(n_repeats - 1);
-                        return;
-                    },
-                    Continue => { 
-                        next_counter = None;
-                        return;
-                    }
-                    Break(addr) => { 
-                        breakpoints.push(Breakpoint::Instr(addr));
-                        println!("Breakpoint {}: 0x{:04x}.", breakpoints.len(), addr);
-                    }
-                    Watch(addr) => { 
-                        breakpoints.push(Breakpoint::Mem(addr, cpu.mem_read(addr)));
-                        println!("Watchpoint {}: [{:04x}] (cur = {:02x}).",
-                                 breakpoints.len(), addr, cpu.mem_read(addr));
-                    }
-                    WatchReg("SP") => {
-                        breakpoints.push(Breakpoint::SP(cpu.sp));
-                        println!("Watchpoint {}: SP (cur = {:02x}).",
-                                  breakpoints.len(), cpu.sp);
-                    }
-                    WatchReg(_) => {
-                        println!("Misformatted watchpoint command.")
-                    }
-                    Delete(Some(n)) => { 
-                        if n >= breakpoints.len() {
-                            println!("Breakpoint {} not found.", n);
-                            continue;
-                        }
-                        breakpoints[n] = Breakpoint::Deleted;
-                        println!("Deleted breakpoint {}.", n);
-                    }
-                    Info => {
-                        if breakpoints.len() == 0 {
-                            println!("No breakpoints");
-                            continue;
-                        }
-                        for (i,b) in breakpoints.iter().enumerate() {
-                            match b {
-                                Breakpoint::Instr(addr) => {
-                                    println!("Breakpoint {}: {:04x}", i, addr);
-                                },
-                                Breakpoint::Mem(addr, _) => {
-                                    println!("Watchpoint {}: [{:04x}] (cur = {:02x}).", i, addr, cpu.mem_read(*addr));
-                                }
-                                Breakpoint::SP(_) => {
-                                    println!("Watchpoint {}: SP (cur = {:02x}).", i, cpu.sp);
-                                }
-                                Breakpoint::Deleted => { }
-                            }
-                        }
-                    }
-                    Delete(None) => {
-                        breakpoints.clear();
-                        println!("All breakpoints deleted.");
-                    }
-                    RepeatLastCommand => { unreachable!(); },
-                }
-            }
-        });
+        run_debugger(cpu);
+        return;
     }
 
     // initialize SDL2 (https://bugzmanov.github.io/nes_ebook/chapter_3_4.html)
@@ -470,7 +181,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
 
     eprintln!("Initialized SDL2");
 
-    // let mut last_frame_time = SystemTime::now();
+    let mut frame = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
     let mut next_frame_n_cycle = 0;
     cpu.run_with_callback(move |cpu: &mut Cpu| {
         if cpu.n_cycles < next_frame_n_cycle {
@@ -478,41 +189,12 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
         }
         next_frame_n_cycle += CYCLES_PER_FRAME;
 
-        // let now = SystemTime::now();
-        // eprintln!("Frame time: {}", now.duration_since(last_frame_time).expect("Time went backwards").as_millis());
-        // last_frame_time = now;
-
         handle_user_input(&mut event_pump);
-        let mut tile_map_rgb = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
 
-        // let t1 = SystemTime::now();
-
-        let mut addr = 0x9800;
-        for x_tile in 0..32 {
-            for y_tile in 0..32 {
-                let chr = cpu.mem_read(addr);
-                let tile_data = 0x8000 + (chr as u16 * 16);
-                paint_tile(&cpu.mem_read_range(tile_data, tile_data + 16), 
-                           &mut tile_map_rgb, 
-                           SCREEN_FULL_X,
-                           SCREEN_FULL_Y,
-                           x_tile * 8,
-                           y_tile * 8);
-                addr += 1;
-            }
-        }
-
-        // let t2 = SystemTime::now();
-        // eprintln!("Tile paint time: {}", t2.duration_since(t1).expect("Time went backwards").as_millis());
-
-        texture.update(None, &tile_map_rgb, (SCREEN_FULL_X * 3) as usize).unwrap();
+        draw_tile_map(&cpu, &mut frame); 
+        texture.update(None, &frame, (SCREEN_FULL_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();
-
-        // let t3 = SystemTime::now();
-        // eprintln!("Canvas update time: {}", t3.duration_since(t2).expect("Time went backwards").as_millis());
-
-        // ::std::thread::sleep(std::time::Duration::from_millis(20));
     });
 
     eprintln!("Program terminated after {} cycles", cpu.n_cycles);
