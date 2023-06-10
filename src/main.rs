@@ -262,10 +262,19 @@ fn run_rom_file(rom_file: &str, debug: bool) {
     let mut next_counter: Option<usize> = Some(0);
     let mut breakpoints: Vec<Breakpoint> = Vec::new();
     let mut last_dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
+    let mut stack_start: u16 = 0xfffe;
+    let mut old_sp: u16 = 0xfffe;
 
     if debug {
         // Don't include the display for now...
         cpu.run_with_callback(move |cpu: &mut Cpu| {
+
+            // Determine a good guess for the start of stack
+            if cpu.sp != old_sp.wrapping_add(2) && cpu.sp != old_sp.wrapping_sub(2) && cpu.sp != old_sp {
+                stack_start = cpu.sp;
+            }
+            old_sp = cpu.sp;
+
             let mut should_break = false;
             let mut break_reason: Vec<String> = vec![];
             match next_counter {
@@ -298,8 +307,8 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                     Breakpoint::SP(val) => {
                         if cpu.sp != *val {
                             should_break = true;
-                            break_reason.push(format!("Watchpoint {} of SP (old = {:02x}, cur = {:02x})",
-                                                      i, *val, cpu.sp));
+                            break_reason.push(format!("Watchpoint {} of SP (old = {:04x}, cur = {:04x}, stack_start = {:04x})",
+                                                      i, *val, cpu.sp, stack_start));
                             *val = cpu.sp;
                         }
                     }
@@ -331,13 +340,16 @@ fn run_rom_file(rom_file: &str, debug: bool) {
             more_info[0] = format!("n_cycles: {}", cpu.n_cycles);
             more_info[1] = format!("n_instrs: {}", cpu.n_instrs);
 
-            for i in 0..10 {
-                let pc_arrow = if dissembly[i].0 == cpu.pc { "PC->" } else { "" };
-                let sp_arrow = if i == 0 { "SP->" } else { "" };
-                println!("{:4}{:04x}: {:20} {:4}{:15}{:15}{}", 
-                         pc_arrow,
-                         dissembly[i].0, format!("{}", dissembly[i].1,),
-                         sp_arrow, stack_trace[i], registers[i], more_info[i]);
+            for i in 0..10usize {
+                let (pc,instr) = dissembly[i];
+                let sp = stack_start - 2 * (10 - 1 - i as u16);
+                let pc_arrow = if pc == cpu.pc { "PC->" } else { "" };
+                let sp_arrow = if sp == cpu.sp { "SP->" } else { "" };
+                print!("{:4}{:04x}: {:20}", 
+                         pc_arrow, pc, format!("{}", instr));
+                print!("{:4}{:04x}: {:04x}    ",
+                         sp_arrow, sp, cpu.mem_read16(sp));
+                println!("{:15}{}", registers[i], more_info[i]);
             }
             for line in break_reason {
                 println!("{}", line);
