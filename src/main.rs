@@ -2,8 +2,7 @@ use std::fs;
 use std::io::{stdin, stdout, Write};
 // use std::time::SystemTime;
 
-use gbem::Cpu;
-use gbem::Mem;
+use gbem::{Cpu, Mem, Instruction};
 
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -262,7 +261,7 @@ fn run_rom_file(rom_file: &str, debug: bool) {
     let mut last_command = DebugCommand::Next(1);
     let mut next_counter: Option<usize> = Some(0);
     let mut breakpoints: Vec<Breakpoint> = Vec::new();
-    // let mut watchpoints: Vec<(u16,u8)> = Vec::new();
+    let mut last_dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
 
     if debug {
         // Don't include the display for now...
@@ -312,8 +311,33 @@ fn run_rom_file(rom_file: &str, debug: bool) {
             }
 
             print!("{esc}c", esc = 27 as char); // clear screen
-            for line in cpu.display_state() {
-                println!("{}", line);
+
+            // Determine a reasonable range of instructions to display
+            let mut dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
+            for i in 0..10 {
+                if cpu.pc == last_dissembly[i].0 {
+                    match i {
+                        0..=6  => { dissembly = last_dissembly.clone(); }
+                        7..=9 => { dissembly = cpu.disassemble(last_dissembly[i - 6].0, 10); }
+                        _ => { unreachable!(); }
+                    }
+                    break;
+                }
+            }
+            last_dissembly = dissembly.clone();
+
+            let registers: Vec<String> = cpu.display_regs_and_flags(10);
+            let mut more_info = vec![String::from(""); 10];
+            more_info[0] = format!("n_cycles: {}", cpu.n_cycles);
+            more_info[1] = format!("n_instrs: {}", cpu.n_instrs);
+
+            for i in 0..10 {
+                let pc_arrow = if dissembly[i].0 == cpu.pc { "PC->" } else { "" };
+                let sp_arrow = if i == 0 { "SP->" } else { "" };
+                println!("{:4}{:04x}: {:20} {:4}{:15}{:15}{}", 
+                         pc_arrow,
+                         dissembly[i].0, format!("{}", dissembly[i].1,),
+                         sp_arrow, stack_trace[i], registers[i], more_info[i]);
             }
             for line in break_reason {
                 println!("{}", line);

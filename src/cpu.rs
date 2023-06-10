@@ -384,6 +384,12 @@ impl Cpu {
         self.run_with_callback(|_| {});
     }
 
+    pub fn fetch_and_decode(&self, pc: u16) -> Instruction {
+        Instruction::decode(self.mem_read(pc),
+                            || {self.mem_read(pc.wrapping_add(1))},
+                            || {self.mem_read(pc.wrapping_add(2))})
+    }
+
     /// Run the CPU and run callback *before* each instruction executed
     pub fn run_with_callback<F>(&mut self, mut callback: F) 
     where F: FnMut(&mut Cpu)
@@ -399,9 +405,7 @@ impl Cpu {
                 continue;
             }
 
-            let instr = Instruction::decode(self.mem_read(self.pc),
-                                            || {self.mem_read(self.pc.wrapping_add(1))},
-                                            || {self.mem_read(self.pc.wrapping_add(2))});
+            let instr = self.fetch_and_decode(self.pc);
             self.execute_instruction(instr);
 
             self.bus.sync(self.n_cycles);
@@ -690,17 +694,11 @@ impl Cpu {
         }
     }
 
-    pub fn display_instrs(&self, n_instrs: usize) -> Vec<String> {
-        let mut pc = self.pc;
+    pub fn disassemble(&self, mut pc: u16, n_instrs: usize) -> Vec<(u16,Instruction)> {
         let mut instrs = Vec::new();
         for _ in 0..n_instrs {
-            let instr = Instruction::decode(self.mem_read(pc),
-                                            || {self.mem_read(pc.wrapping_add(1))},
-                                            || {self.mem_read(pc.wrapping_add(2))});
-            instrs.push(format!("{:04x}: {}", pc, instr));
-                          // self.mem_read(pc),
-                          // if instr.length >= 2 { format!("{:02x}", self.mem_read(pc + 1)) } else { "  ".to_string() },
-                          // if instr.length == 3 { format!("{:02x}", self.mem_read(pc + 2)) } else { "  ".to_string() },
+            let instr = self.fetch_and_decode(pc);
+            instrs.push((pc,instr));
             pc += instr.length;
         }
         instrs
@@ -739,24 +737,6 @@ impl Cpu {
             format!("PC = {:04x}", self.pc),
             format!("SP = {:04x}", self.sp),
         ]
-    }
-
-    pub fn display_state(&self) -> Vec<String> {
-        let instr_trace: Vec<String> = self.display_instrs(10);
-        let stack_trace: Vec<String> = self.display_stack(10);
-        let registers: Vec<String> = self.display_regs_and_flags(10);
-        let mut more_info = vec![String::from(""); 10];
-        more_info[0] = format!("n_cycles: {}", self.n_cycles);
-        more_info[1] = format!("n_instrs: {}", self.n_instrs);
-
-        let mut out = Vec::new();
-        for (i,(instr, stack, reg, info)) in itertools::izip!(
-                &instr_trace, &stack_trace, &registers, &more_info).enumerate() {
-            let pc_arrow = if i == 0 { "PC->" } else { "" };
-            let sp_arrow = if i == 0 { "SP->" } else { "" };
-            out.push(format!("{:4}{:20}{:4}{:15}{:15}{}", pc_arrow, instr, sp_arrow, stack, reg, info));
-        }
-        out
     }
 }
 

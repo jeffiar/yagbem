@@ -5,7 +5,7 @@ pub mod opcodes;
 pub use cpu::Cpu;
 pub use bus::Mem;
 
-use crate::opcodes::Instruction;
+pub use crate::opcodes::Instruction;
 use crate::cpu::Flags;
 
 use std::fmt;
