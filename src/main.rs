@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{stdin, stdout, Write};
 // use std::time::SystemTime;
 
-use gbem::{Cpu, Mem, Instruction};
+use gbem::{Cpu, Mem, Instruction, Opcode};
 
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -257,6 +257,7 @@ fn run_rom_file(rom_file: &str, debug: bool) {
     cpu.load_rom(&program);
     cpu.reset();
 
+    cpu.pc = 0;
 
     let mut last_command = DebugCommand::Next(1);
     let mut next_counter: Option<usize> = Some(0);
@@ -266,14 +267,8 @@ fn run_rom_file(rom_file: &str, debug: bool) {
     let mut old_sp: u16 = 0xfffe;
 
     if debug {
-        // Don't include the display for now...
+        // Use the debugger, without graphical display for now
         cpu.run_with_callback(move |cpu: &mut Cpu| {
-
-            // Determine a good guess for the start of stack
-            if cpu.sp != old_sp.wrapping_add(2) && cpu.sp != old_sp.wrapping_sub(2) && cpu.sp != old_sp {
-                stack_start = cpu.sp;
-            }
-            old_sp = cpu.sp;
 
             let mut should_break = false;
             let mut break_reason: Vec<String> = vec![];
@@ -307,8 +302,8 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                     Breakpoint::SP(val) => {
                         if cpu.sp != *val {
                             should_break = true;
-                            break_reason.push(format!("Watchpoint {} of SP (old = {:04x}, cur = {:04x}, stack_start = {:04x})",
-                                                      i, *val, cpu.sp, stack_start));
+                            break_reason.push(format!("Watchpoint {} of SP (old = {:04x}, cur = {:04x}",
+                                                      i, *val, cpu.sp));
                             *val = cpu.sp;
                         }
                     }
@@ -334,6 +329,12 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                 }
             }
             last_dissembly = dissembly.clone();
+            // Determine a good guess for the start of stack
+            if cpu.sp != old_sp.wrapping_add(2) && cpu.sp != old_sp.wrapping_sub(2) && cpu.sp != old_sp {
+                stack_start = cpu.sp;
+            }
+            old_sp = cpu.sp;
+
 
             let registers: Vec<String> = cpu.display_regs_and_flags(10);
             let mut more_info = vec![String::from(""); 10];
@@ -345,8 +346,16 @@ fn run_rom_file(rom_file: &str, debug: bool) {
                 let sp = stack_start - 2 * (10 - 1 - i as u16);
                 let pc_arrow = if pc == cpu.pc { "PC->" } else { "" };
                 let sp_arrow = if sp == cpu.sp { "SP->" } else { "" };
+
+                let mut instr_str = instr.to_string();
+                match instr.opcode {
+                    Opcode::JumpRelative(e) | Opcode::JumpCondRelative(_,e) => { 
+                        instr_str.push_str(&format!("=${:04x}", 2 + pc as i32 + e as i32))
+                    },
+                    _ => { }
+                }
                 print!("{:4}{:04x}: {:20}", 
-                         pc_arrow, pc, format!("{}", instr));
+                         pc_arrow, pc, instr_str);
                 print!("{:4}{:04x}: {:04x}    ",
                          sp_arrow, sp, cpu.mem_read16(sp));
                 println!("{:15}{}", registers[i], more_info[i]);

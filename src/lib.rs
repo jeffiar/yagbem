@@ -6,6 +6,7 @@ pub use cpu::Cpu;
 pub use bus::Mem;
 
 pub use crate::opcodes::Instruction;
+pub use crate::opcodes::Opcode;
 use crate::cpu::Flags;
 
 use std::fmt;

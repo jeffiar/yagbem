@@ -704,21 +704,6 @@ impl Cpu {
         instrs
     }
 
-    pub fn display_stack(&self, n_entries: usize) -> Vec<String> {
-        let mut sp = self.sp;
-        let mut entries = Vec::new();
-        let mut overflow = false;
-        for _ in 0..n_entries {
-            if !overflow {
-                entries.push(format!("{:04x}: {:04x}", sp, self.mem_read16(sp)));
-                (sp,overflow) = sp.overflowing_add(2);
-            } else {
-                entries.push(format!(""))
-            }
-        }
-        entries
-    }
-
     pub fn display_regs_and_flags(&self, _length: usize) -> Vec<String> {
         vec![
             format!(" A = {:02x}", self.a),
