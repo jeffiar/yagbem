@@ -112,6 +112,9 @@ enum Commands {
         /// Don't initialize the display
         #[arg(long, short)]
         debug: bool,
+        /// Start from 0x0000 and load the Nintendo logo into 0x104
+        #[arg(long, short)]
+        boot_rom: bool,
     },
 
     /// Run the jsmoo tests
@@ -126,8 +129,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Run { rom_file, debug }) => {
-            run_rom_file(&rom_file, debug);
+        Some(Commands::Run { rom_file, debug, boot_rom }) => {
+            run_rom_file(&rom_file, debug, boot_rom);
         }
         Some(Commands::TestMoo {opcode, debug } ) => {
             gbem::test_moo(&opcode, debug);
@@ -249,7 +252,7 @@ enum Breakpoint {
     Deleted,
 }
 
-fn run_rom_file(rom_file: &str, debug: bool) {
+fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
     let program = fs::read(rom_file).expect("Could not find rom file");
     eprintln!("Read ROM successfully; {} bytes", program.len());
 
@@ -257,17 +260,27 @@ fn run_rom_file(rom_file: &str, debug: bool) {
     cpu.load_rom(&program);
     cpu.reset();
 
-    cpu.pc = 0;
+    if boot_rom {
+        cpu.pc = 0;
 
-    let mut last_command = DebugCommand::Next(1);
-    let mut next_counter: Option<usize> = Some(0);
-    let mut breakpoints: Vec<Breakpoint> = Vec::new();
-    let mut last_dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
-    let mut stack_start: u16 = 0xfffe;
-    let mut old_sp: u16 = 0xfffe;
+        // For testing the Nintendo boot ROM: load the Nintendo logo
+        // at addr $0104 in ROM cartridge
+        cpu.mem_write_range(0x104,
+                            &[0xCE,0xED,0x66,0x66,0xCC,0x0D,0x00,0x0B,0x03,0x73,0x00,0x83,0x00,0x0C,0x00,0x0D,
+                            0x00,0x08,0x11,0x1F,0x88,0x89,0x00,0x0E,0xDC,0xCC,0x6E,0xE6,0xDD,0xDD,0xD9,0x99,
+                            0xBB,0xBB,0x67,0x63,0x6E,0x0E,0xEC,0xCC,0xDD,0xDC,0x99,0x9F,0xBB,0xB9,0x33,0x3E,]);
+    }
 
     if debug {
         // Use the debugger, without graphical display for now
+
+        let mut last_command = DebugCommand::Next(1);
+        let mut next_counter: Option<usize> = Some(0);
+        let mut breakpoints: Vec<Breakpoint> = Vec::new();
+        let mut last_dissembly: Vec<(u16,Instruction)> = cpu.disassemble(cpu.pc, 10);
+        let mut stack_start: u16 = 0xfffe;
+        let mut old_sp: u16 = 0xfffe;
+
         cpu.run_with_callback(move |cpu: &mut Cpu| {
 
             let mut should_break = false;

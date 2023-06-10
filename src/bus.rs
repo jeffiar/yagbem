@@ -1,6 +1,7 @@
 use std::io::{stderr, Write};
 
 const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
+const CYCLES_PER_LINE: u64 = 114 * 4;
 
 #[allow(dead_code)]
 pub mod register {
@@ -80,6 +81,12 @@ pub trait Mem {
     }
 
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8];
+
+    fn mem_write_range(&mut self, start: u16, data: &[u8]) {
+        for i in 0..data.len() {
+            self.mem_write(start + i as u16, data[i]);
+        }
+    }
 }
 
 
@@ -99,13 +106,19 @@ impl Mem for Bus {
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
+            register::LY => {
+                let frame_start = self.next_vblank_n_cyc - CYCLES_PER_FRAME;
+                ((self.n_cycles - frame_start) / CYCLES_PER_LINE ) as u8
+            }
             _ => self.mem[addr as usize] ,
         }
     }
+
     fn mem_write(&mut self, addr: u16, val: u8) { 
         match addr {
             register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
+            register::LY => { panic!("Register LY (0xff44) is not writeable"); }
             register::SC => { 
                 // Print the serial transfer byte as ASCII character to stderr
                 if (val & 0xf0) != 0 {
@@ -122,6 +135,7 @@ impl Mem for Bus {
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8] {
         &self.mem[start as usize..end as usize]
     }
+
 
 }
 
