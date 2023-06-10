@@ -75,7 +75,7 @@ fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: 
     }
 }
 
-fn draw_tile_map(cpu: &Cpu, tile_map_rgb: &mut [u8]) {
+fn render(cpu: &Cpu, tile_map_rgb: &mut [u8]) {
     let mut addr = 0x9800;
     for x_tile in 0..32 {
         for y_tile in 0..32 {
@@ -182,6 +182,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
     eprintln!("Initialized SDL2");
 
     let mut frame = [0 as u8; (SCREEN_FULL_X * 3 * SCREEN_FULL_Y) as usize];
+
     let mut next_frame_n_cycle = 0;
     cpu.run_with_callback(move |cpu: &mut Cpu| {
         if cpu.n_cycles < next_frame_n_cycle {
@@ -191,7 +192,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
 
         handle_user_input(&mut event_pump);
 
-        draw_tile_map(&cpu, &mut frame); 
+        render(&cpu, &mut frame); 
         texture.update(None, &frame, (SCREEN_FULL_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();

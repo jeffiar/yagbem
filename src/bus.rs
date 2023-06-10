@@ -94,6 +94,7 @@ pub trait Mem {
 pub struct Bus {
     pub mem: [u8; 0x10000],
     pub dirty_addrs: Vec<u16>,
+    pub flat: bool,
     pub IE: Interrupt,
     pub IF: Interrupt,
 
@@ -103,6 +104,10 @@ pub struct Bus {
 
 impl Mem for Bus {
     fn mem_read(&self, addr: u16) -> u8 { 
+        if self.flat {
+            return self.mem[addr as usize];
+        }
+
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
@@ -115,6 +120,12 @@ impl Mem for Bus {
     }
 
     fn mem_write(&mut self, addr: u16, val: u8) { 
+        if self.flat {
+            self.mem[addr as usize] = val; 
+            self.dirty_addrs.push(addr);
+            return;
+        }
+
         match addr {
             register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
@@ -135,8 +146,6 @@ impl Mem for Bus {
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8] {
         &self.mem[start as usize..end as usize]
     }
-
-
 }
 
 impl Bus {
@@ -144,6 +153,7 @@ impl Bus {
         let mut bus = Bus { 
             mem: [0; 0x10000],
             dirty_addrs: Vec::new(),
+            flat: false,
             IE: Interrupt::empty(),
             IF: Interrupt::empty(),
             n_cycles: 0,
@@ -153,8 +163,10 @@ impl Bus {
         bus
     }
 
-    pub fn reset(&mut self) {
-        *self = Bus::new();
+    pub fn new_flat() -> Bus {
+        let mut bus = Bus::new();
+        bus.flat = true;
+        bus
     }
 
     pub fn load(&mut self, program: &[u8], start: u16) {
@@ -162,9 +174,6 @@ impl Bus {
         self.mem[start..(start + program.len())].copy_from_slice(program);
     }
 
-    // pub fn mem_write_bit(&mut self, addr: u16, bit: u8, val: bool) {
-        // Can do matching for registers here if desired
-    // }
     pub fn clear_dirty_addrs(&mut self) {
         self.dirty_addrs.clear();
     }
@@ -191,7 +200,7 @@ mod tests {
 
     #[test]
     fn load_program_to_bus() {
-        let mut bus = Bus::new();
+        let mut bus = Bus::new_flat();
 
         assert_eq!(bus.mem_read(0x200), 0);
         bus.load(&[0x12, 0x34, 0x56], 0x0200);
@@ -203,7 +212,7 @@ mod tests {
 
     #[test]
     fn bus_read_write_simple() {
-        let mut bus = Bus::new();
+        let mut bus = Bus::new_flat();
 
         assert_eq!(bus.mem_read(0xc000), 0);
         bus.mem_write(0xc000, 42);
@@ -211,18 +220,8 @@ mod tests {
     }
 
     #[test]
-    fn reset_bus() {
-        let mut bus = Bus::new();
-
-        bus.mem_write(0xc010, 42);
-        assert_eq!(bus.mem_read(0xc010), 42);
-        bus.reset();
-        assert_eq!(bus.mem_read(0xc010), 0);
-    }
-
-    #[test]
     fn bus_read16_simple() {
-        let mut bus = Bus::new();
+        let mut bus = Bus::new_flat();
         bus.mem_write(0xc000, 0x42);
         bus.mem_write(0xc001, 0xaa);
         assert_eq!(bus.mem_read16(0xc000), 0xaa42);
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn bus_write16_simple() {
-        let mut bus = Bus::new();
+        let mut bus = Bus::new_flat();
         bus.mem_write16(0xc100, 0x1122);
         assert_eq!(bus.mem_read(0xc100), 0x22);
         assert_eq!(bus.mem_read(0xc101), 0x11);

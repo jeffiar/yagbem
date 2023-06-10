@@ -71,7 +71,7 @@ fn add_relative(addr: u16, offset: i8) -> u16 {
 }
 
 impl Cpu {
-    pub fn new() -> Self {
+    pub fn new() -> Cpu {
         Cpu {
             a: 0,  b: 0,  c: 0,  d: 0,
             e: 0,  h: 0,  l: 0,
@@ -87,8 +87,9 @@ impl Cpu {
     }
 
     /// With "flat" memory without any mapping for memory access test purposes
-    pub fn new_flat() -> Self {
-        let cpu = Cpu::new();
+    pub fn new_flat() -> Cpu {
+        let mut cpu = Cpu::new();
+        cpu.bus.flat = false;
         cpu
     }
 

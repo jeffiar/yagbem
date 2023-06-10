@@ -138,7 +138,7 @@ fn run_test(test: &Test, debug: bool) {
         running: true,
         n_cycles: 0,
         n_instrs: 0,
-        bus: bus::Bus::new(),
+        bus: bus::Bus::new_flat(),
     };
 
     for pair in test.initial.ram.iter() {
