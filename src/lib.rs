@@ -7,6 +7,7 @@ pub mod debugger;
 pub use cpu::Cpu;
 pub use bus::Mem;
 pub use debugger::run_debugger;
+pub use bus::register;
 
 pub use crate::opcodes::Instruction;
 pub use crate::opcodes::Opcode;

@@ -93,12 +93,12 @@ pub trait Mem {
 #[allow(non_snake_case)]
 pub struct Bus {
     pub mem: [u8; 0x10000],
-    pub dirty_addrs: Vec<u16>,
     pub flat: bool,
     pub IE: Interrupt,
     pub IF: Interrupt,
 
     n_cycles: u64,
+    dirty_addrs: Vec<u16>,
     next_vblank_n_cyc: u64,
 }
 
@@ -185,7 +185,7 @@ impl Bus {
     pub fn sync(&mut self, n_cycles: u64) {
         if n_cycles >= self.next_vblank_n_cyc {
             self.next_vblank_n_cyc += CYCLES_PER_FRAME;
-            self.IE.insert(Interrupt::VBLANK);
+            self.IF.insert(Interrupt::VBLANK);
         };
         self.n_cycles = n_cycles;
     }
