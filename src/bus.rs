@@ -90,14 +90,62 @@ pub trait Mem {
 }
 
 struct Timer {
-    div_written_n_cyc: u64,
+    div_counter: u64,
+    tima_counter: u64,
+    tma: u8,
+    period_log_2: u8,
+    running: bool,
 }
 
 impl Timer {
     fn new() -> Timer {
         Timer {
-            div_written_n_cyc: 0,
+            div_counter: 0,
+            tima_counter: 0,
+            tma: 0,
+            period_log_2: 10,
+            running: false,
         }
+    }
+
+    /// Returns whether a timer overflow has ocurred
+    fn tick(&mut self, nticks: u64, mem: &mut [u8]) -> bool {
+        self.div_counter += nticks;
+        mem[register::DIV as usize] = (self.div_counter >> 9) as u8;
+
+        if !self.running {
+            return false;
+        }
+
+        self.tima_counter += nticks << (10 - self.period_log_2);
+        let tima = self.tima_counter >> 10;
+        if tima >= 256 {
+            mem[register::TIMA as usize] = self.tma;
+            self.set_tima(self.tma);
+            return true;
+        } else {
+            mem[register::TIMA as usize] = tima as u8;
+            return false;
+        }
+
+    }
+
+    fn set_running(&mut self, running: bool) { self.running = running; }
+    fn reset_div_counter(&mut self)  { self.div_counter = 0; }
+    fn set_tma(&mut self, tma: u8)   { self.tma = tma; }
+
+    fn set_tima(&mut self, tima: u8) { 
+        self.tima_counter |= (tima as u64) << 10;
+    }
+
+    fn set_tima_period(&mut self, period_bits: u8) {
+        self.period_log_2 = match period_bits {
+            0b00 => 10,
+            0b01 => 4,
+            0b10 => 6,
+            0b11 => 8,
+            _    => unreachable!(),
+        };
     }
 }
 
@@ -124,9 +172,6 @@ impl Mem for Bus {
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
-            register::DIV => {
-                ((self.n_cycles - self.timer.div_written_n_cyc) >> 9) as u8
-            }
             register::LY => {
                 let frame_start = self.next_vblank_n_cyc - CYCLES_PER_FRAME;
                 ((self.n_cycles - frame_start) / CYCLES_PER_LINE ) as u8
@@ -147,7 +192,17 @@ impl Mem for Bus {
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::LY => { panic!("Register LY (0xff44) is not writeable"); }
             register::DIV => {
-                self.timer.div_written_n_cyc = self.n_cycles;
+                self.timer.reset_div_counter();
+            }
+            register::TAC => {
+                self.timer.set_running((val & 0b100) != 0);
+                self.timer.set_tima_period(val & 0b011);
+            }
+            register::TMA => {
+                self.timer.set_tma(val);
+            }
+            register::TIMA => {
+                self.timer.set_tima(val);
             }
             register::SC => { 
                 // Print the serial transfer byte as ASCII character to stderr
@@ -202,10 +257,17 @@ impl Bus {
     }
 
     pub fn sync(&mut self, n_cycles: u64) {
+        let nticks = n_cycles - self.n_cycles;
+
         if n_cycles >= self.next_vblank_n_cyc {
             self.next_vblank_n_cyc += CYCLES_PER_FRAME;
             self.IF.insert(Interrupt::VBLANK);
         };
+
+        if self.timer.tick(nticks, &mut self.mem) {
+            self.IF.insert(Interrupt::TIMER);
+        }
+
         self.n_cycles = n_cycles;
     }
 }
@@ -266,5 +328,93 @@ mod tests {
         assert_eq!(bus.mem_read(register::DIV), 1);
         bus.sync(420000 + (69 << 9));
         assert_eq!(bus.mem_read(register::DIV), 69);
+    }
+
+    #[test]
+    fn timer_basic() {
+        let mut bus = Bus::new();
+
+        bus.sync(42_000);
+
+        bus.mem_write(register::TAC, 3);
+        bus.mem_write(register::TAC, 7);
+        bus.sync(42_000 + (5 * (1 << 8)));
+        assert_eq!(bus.mem_read(register::TIMA), 5);
+
+         // stop timer
+        bus.mem_write(register::TAC, 3);
+        bus.sync(100_000 + (5 * (1 << 8)));
+        assert_eq!(bus.mem_read(register::TIMA), 5);
+
+         // restart timer
+        bus.mem_write(register::TAC, 7);
+        bus.sync(100_000 + (42 * (1 << 8)));
+        assert_eq!(bus.mem_read(register::TIMA), 42);
+
+        // let timer overflow and check that it triggers interrupt
+        bus.sync(100_000 + (256 * (1 << 8)));
+        assert_eq!(bus.mem_read(register::TIMA), 0);
+        assert!(bus.IF.contains(Interrupt::TIMER));
+    }
+
+    #[test]
+    fn timer_frequency_10() {
+        let mut bus = Bus::new();
+        bus.sync(42_000);
+
+        bus.mem_write(register::TAC, 0b010);
+        bus.mem_write(register::TAC, 0b110);
+        bus.sync(42_000 + (5 * (1 << 6)));
+        assert_eq!(bus.mem_read(register::TIMA), 5);
+
+        // let timer overflow and check that it triggers interrupt
+        bus.sync(42_000 + (256 * (1 << 6)));
+        assert_eq!(bus.mem_read(register::TIMA), 0);
+        assert!(bus.IF.contains(Interrupt::TIMER));
+    }
+
+    #[test]
+    fn timer_frequency_01() {
+        let mut bus = Bus::new();
+        bus.sync(42_000);
+
+        bus.mem_write(register::TAC, 0b001);
+        bus.mem_write(register::TAC, 0b101);
+        bus.sync(42_000 + (5 * (1 << 4)));
+        assert_eq!(bus.mem_read(register::TIMA), 5);
+
+        // let timer overflow and check that it triggers interrupt
+        bus.sync(42_000 + (256 * (1 << 4)));
+        assert_eq!(bus.mem_read(register::TIMA), 0);
+        assert!(bus.IF.contains(Interrupt::TIMER));
+    }
+
+    #[test]
+    fn timer_frequency_00() {
+        let mut bus = Bus::new();
+        bus.sync(42_000);
+
+        bus.mem_write(register::TAC, 0b000);
+        bus.mem_write(register::TAC, 0b100);
+        bus.sync(42_000 + (5 * (1 << 10)));
+        assert_eq!(bus.mem_read(register::TIMA), 5);
+
+        // let timer overflow and check that it triggers interrupt
+        bus.sync(42_000 + (256 * (1 << 10)));
+        assert_eq!(bus.mem_read(register::TIMA), 0);
+        assert!(bus.IF.contains(Interrupt::TIMER));
+    }
+
+    #[test]
+    fn timer_modulo_load() {
+        let mut bus = Bus::new();
+        bus.sync(42_000);
+
+        bus.mem_write(register::TMA, 69);
+        bus.mem_write(register::TAC, 0b100);
+        bus.sync(42_000 + 256 * (1 << 10));
+
+        assert_eq!(bus.mem_read(register::TIMA), 69);
+        assert!(bus.IF.contains(Interrupt::TIMER));
     }
 }
