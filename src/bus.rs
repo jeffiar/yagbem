@@ -89,6 +89,17 @@ pub trait Mem {
     }
 }
 
+struct Timer {
+    div_written_n_cyc: u64,
+}
+
+impl Timer {
+    fn new() -> Timer {
+        Timer {
+            div_written_n_cyc: 0,
+        }
+    }
+}
 
 #[allow(non_snake_case)]
 pub struct Bus {
@@ -100,6 +111,8 @@ pub struct Bus {
     n_cycles: u64,
     dirty_addrs: Vec<u16>,
     next_vblank_n_cyc: u64,
+
+    timer: Timer,
 }
 
 impl Mem for Bus {
@@ -111,6 +124,9 @@ impl Mem for Bus {
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
+            register::DIV => {
+                ((self.n_cycles - self.timer.div_written_n_cyc) >> 9) as u8
+            }
             register::LY => {
                 let frame_start = self.next_vblank_n_cyc - CYCLES_PER_FRAME;
                 ((self.n_cycles - frame_start) / CYCLES_PER_LINE ) as u8
@@ -130,6 +146,9 @@ impl Mem for Bus {
             register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::LY => { panic!("Register LY (0xff44) is not writeable"); }
+            register::DIV => {
+                self.timer.div_written_n_cyc = self.n_cycles;
+            }
             register::SC => { 
                 // Print the serial transfer byte as ASCII character to stderr
                 if (val & 0xf0) != 0 {
@@ -150,23 +169,23 @@ impl Mem for Bus {
 
 impl Bus {
     pub fn new() -> Bus {
-        let mut bus = Bus { 
-            mem: [0; 0x10000],
-            dirty_addrs: Vec::new(),
-            flat: false,
-            IE: Interrupt::empty(),
-            IF: Interrupt::empty(),
-            n_cycles: 0,
-            next_vblank_n_cyc: CYCLES_PER_FRAME,
-        };
+        let mut bus = Bus::new_flat();
+        bus.flat = false;
         bus.mem_write(register::LCDC, 0x83);
         bus
     }
 
     pub fn new_flat() -> Bus {
-        let mut bus = Bus::new();
-        bus.flat = true;
-        bus
+        Bus { 
+            mem: [0; 0x10000],
+            dirty_addrs: Vec::new(),
+            flat: true,
+            IE: Interrupt::empty(),
+            IF: Interrupt::empty(),
+            n_cycles: 0,
+            next_vblank_n_cyc: CYCLES_PER_FRAME,
+            timer: Timer::new(),
+        }
     }
 
     pub fn load(&mut self, program: &[u8], start: u16) {
@@ -233,5 +252,19 @@ mod tests {
         bus.mem_write16(0xc100, 0x1122);
         assert_eq!(bus.mem_read(0xc100), 0x22);
         assert_eq!(bus.mem_read(0xc101), 0x11);
+    }
+
+    #[test]
+    fn div_register() {
+        let mut bus = Bus::new();
+
+        assert_eq!(bus.mem_read(register::DIV), 0);
+        bus.sync(420000);
+        bus.mem_write(register::DIV, 0x40);
+        assert_eq!(bus.mem_read(register::DIV), 0);
+        bus.sync(420000 + (1 << 9));
+        assert_eq!(bus.mem_read(register::DIV), 1);
+        bus.sync(420000 + (69 << 9));
+        assert_eq!(bus.mem_read(register::DIV), 69);
     }
 }
