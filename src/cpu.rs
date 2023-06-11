@@ -347,18 +347,18 @@ impl Cpu {
     }
 
     #[allow(non_snake_case)]
-    fn poll_irq(&self) -> Option<u16> {
+    fn poll_irq(&self) -> Option<Interrupt> {
         if !self.interrupt_master_enable {
             return None;
         }
         let iflags = self.bus.IE & self.bus.IF;
         
         if iflags.bits() != 0 {
-            if iflags.contains(Interrupt::VBLANK ) { return Some(0x40); }
-            if iflags.contains(Interrupt::LCDC   ) { return Some(0x48); }
-            if iflags.contains(Interrupt::TIMER  ) { return Some(0x50); }
-            if iflags.contains(Interrupt::SERIAL ) { return Some(0x58); }
-            if iflags.contains(Interrupt::INPUT )  { return Some(0x60); }
+            if iflags.contains(Interrupt::VBLANK) { return Some(Interrupt::VBLANK); }
+            if iflags.contains(Interrupt::LCDC) { return Some(Interrupt::LCDC); }
+            if iflags.contains(Interrupt::TIMER) { return Some(Interrupt::TIMER); }
+            if iflags.contains(Interrupt::SERIAL) { return Some(Interrupt::SERIAL); }
+            if iflags.contains(Interrupt::INPUT)  { return Some(Interrupt::INPUT); }
         }
         None
     }
@@ -381,27 +381,30 @@ impl Cpu {
         while self.running {
             callback(self);
 
-            if let Some(interrupt_handler_address) = self.poll_irq() {
-                self.interrupt_master_enable = false;
-                self.push_onto_stack(self.pc);
-                self.pc = interrupt_handler_address;
-                continue;
+            if let Some(interrupt) = self.poll_irq() {
+                self.handle_interrupt(interrupt);
+            } else {
+                let instr = self.fetch_and_decode(self.pc);
+                self.execute_instruction(instr);
             }
-
-            let instr = self.fetch_and_decode(self.pc);
-            self.execute_instruction(instr);
-
-            // eprintln!("{:04x}: {}", self.pc, instr);
-            // if instr.opcode == Opcode::JumpRelative(-2) { break; }
 
             self.bus.sync(self.n_cycles);
         }
     }
 
+    fn handle_interrupt(&mut self, interrupt: Interrupt) {
+        assert!(self.bus.IF.contains(interrupt));
+        self.bus.IF.remove(interrupt);
+        self.interrupt_master_enable = false;
+        self.push_onto_stack(self.pc);
+        self.pc = Interrupt::handler_addr(interrupt);
+        self.n_cycles += 20;
+    }
+
     pub fn execute_instruction(&mut self, instr: Instruction) {
         self.pc = self.pc.wrapping_add(instr.length);
-        self.n_cycles = self.n_cycles.wrapping_add(instr.cycles);
-        self.n_instrs = self.n_instrs.wrapping_add(1);
+        self.n_cycles += instr.cycles;
+        self.n_instrs += 1;
 
         match instr.opcode {
             Opcode::NoOp => {}

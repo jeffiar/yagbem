@@ -63,6 +63,19 @@ bitflags! {
     }
 }
 
+impl Interrupt {
+    pub fn handler_addr(i: Interrupt) -> u16 {
+        match i.bits() {
+            0b00001..=0b00001 => 0x60,
+            0b00010..=0b00011 => 0x58,
+            0b00100..=0b00111 => 0x50,
+            0b01000..=0b01111 => 0x48,
+            0b10000..=0b10000 => 0x48,
+            _ => unreachable!()
+        }
+    }
+}
+
 
 pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
