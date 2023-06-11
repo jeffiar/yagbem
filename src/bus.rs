@@ -1,6 +1,7 @@
 use std::io::{stderr, Write};
 
 const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
+const VBLANK_CYCLE_N: u64 = 65664;
 const CYCLES_PER_LINE: u64 = 114 * 4;
 
 #[allow(dead_code)]
@@ -8,10 +9,10 @@ pub mod register {
     pub const P1   : u16 = 0xFF00; // Joypad input
     pub const SB   : u16 = 0xFF01; // Serial transfer data
     pub const SC   : u16 = 0xFF02; // Serial transfer control
-    pub const DIV  : u16 = 0xFF03; // Divider register
-    pub const TIMA : u16 = 0xFF04; // Timer counter
-    pub const TMA  : u16 = 0xFF05; // Timer modulo
-    pub const TAC  : u16 = 0xFF06; // Timer control
+    pub const DIV  : u16 = 0xFF04; // Divider register
+    pub const TIMA : u16 = 0xFF05; // Timer counter
+    pub const TMA  : u16 = 0xFF06; // Timer modulo
+    pub const TAC  : u16 = 0xFF07; // Timer control
     pub const IF   : u16 = 0xFF0F; // Interrupt request flag
     pub const IE   : u16 = 0xFFFF; // Interrupt enable flag
     pub const LCDC : u16 = 0xFF40; // LCD control
@@ -98,6 +99,7 @@ struct Timer {
 }
 
 impl Timer {
+    const TIMA_MASK: u64 = (0xff << 10);
     fn new() -> Timer {
         Timer {
             div_counter: 0,
@@ -131,11 +133,16 @@ impl Timer {
     }
 
     fn set_running(&mut self, running: bool) { self.running = running; }
-    fn reset_div_counter(&mut self)  { self.div_counter = 0; }
+
+    fn reset_div_counter(&mut self)  { 
+        self.div_counter = 0;
+        self.tima_counter &= Timer::TIMA_MASK;
+    }
+
     fn set_tma(&mut self, tma: u8)   { self.tma = tma; }
 
     fn set_tima(&mut self, tima: u8) { 
-        self.tima_counter |= (tima as u64) << 10;
+        self.tima_counter = (tima as u64) << 10; // | (0x3ff & self.tima_counter);
     }
 
     fn set_tima_period(&mut self, period_bits: u8) {
@@ -158,7 +165,7 @@ pub struct Bus {
 
     n_cycles: u64,
     dirty_addrs: Vec<u16>,
-    next_vblank_n_cyc: u64,
+    frame_start_n_cyc: u64,
 
     timer: Timer,
 }
@@ -172,9 +179,9 @@ impl Mem for Bus {
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
+            register::SC => 0x00,
             register::LY => {
-                let frame_start = self.next_vblank_n_cyc - CYCLES_PER_FRAME;
-                ((self.n_cycles - frame_start) / CYCLES_PER_LINE ) as u8
+                ((self.n_cycles - self.frame_start_n_cyc) / CYCLES_PER_LINE ) as u8
             }
             _ => self.mem[addr as usize] ,
         }
@@ -238,7 +245,7 @@ impl Bus {
             IE: Interrupt::empty(),
             IF: Interrupt::empty(),
             n_cycles: 0,
-            next_vblank_n_cyc: CYCLES_PER_FRAME,
+            frame_start_n_cyc: 0,
             timer: Timer::new(),
         }
     }
@@ -259,8 +266,11 @@ impl Bus {
     pub fn sync(&mut self, n_cycles: u64) {
         let nticks = n_cycles - self.n_cycles;
 
-        if n_cycles >= self.next_vblank_n_cyc {
-            self.next_vblank_n_cyc += CYCLES_PER_FRAME;
+        if n_cycles >= self.frame_start_n_cyc + CYCLES_PER_FRAME {
+            self.frame_start_n_cyc += CYCLES_PER_FRAME;
+        }
+
+        if n_cycles >= self.frame_start_n_cyc + VBLANK_CYCLE_N {
             self.IF.insert(Interrupt::VBLANK);
         };
 
@@ -321,11 +331,15 @@ mod tests {
         let mut bus = Bus::new();
 
         assert_eq!(bus.mem_read(register::DIV), 0);
+
         bus.sync(420000);
         bus.mem_write(register::DIV, 0x40);
+        bus.sync(420000);
         assert_eq!(bus.mem_read(register::DIV), 0);
+
         bus.sync(420000 + (1 << 9));
         assert_eq!(bus.mem_read(register::DIV), 1);
+
         bus.sync(420000 + (69 << 9));
         assert_eq!(bus.mem_read(register::DIV), 69);
     }

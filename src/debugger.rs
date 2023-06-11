@@ -203,6 +203,13 @@ pub fn run_debugger(mut cpu: Cpu) {
         let mut more_info = vec![String::from(""); 10];
         more_info[0] = format!("n_cycles: {}", cpu.n_cycles);
         more_info[1] = format!("n_instrs: {}", cpu.n_instrs);
+        let mut j = 3;
+        for b in breakpoints.iter() {
+            if let Breakpoint::Mem(addr, _) = b {
+                more_info[j] = format!("{:04x}: {:02x}", *addr, cpu.mem_read(*addr));
+                j += 1;
+            }
+        }
 
         for i in 0..10usize {
             let (pc,instr) = dissembly[i];

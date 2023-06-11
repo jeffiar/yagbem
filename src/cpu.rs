@@ -391,6 +391,9 @@ impl Cpu {
             let instr = self.fetch_and_decode(self.pc);
             self.execute_instruction(instr);
 
+            // eprintln!("{:04x}: {}", self.pc, instr);
+            // if instr.opcode == Opcode::JumpRelative(-2) { break; }
+
             self.bus.sync(self.n_cycles);
         }
     }
