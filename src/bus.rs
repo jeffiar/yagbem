@@ -176,6 +176,11 @@ pub struct Bus {
     n_cycles: u64,
     dirty_addrs: Vec<u16>,
 
+    dma_running: bool,
+    dma_counter: u16,
+    dma_start_n_cyc: u64,
+    dma_start_addr: u16,
+
     timer: Timer,
     ppu: Ppu,
 }
@@ -184,6 +189,10 @@ impl Mem for Bus {
     fn mem_read(&self, addr: u16) -> u8 { 
         if self.flat {
             return self.mem[addr as usize];
+        }
+
+        if self.dma_running && addr < 0xff80 {
+            return 0xff;
         }
 
         match addr {
@@ -222,8 +231,11 @@ impl Mem for Bus {
                 // Print the serial transfer byte as ASCII character to stderr
                 if (val & 0xf0) != 0 {
                     eprint!("{}", self.mem_read(register::SB) as char);
-                    stderr().flush().expect("Failed to write to stderr");
+                    stderr().flush().unwrap();
                 }
+            }
+            register::DMA => {
+                self.initiate_dma((val as u16) << 8);
             }
             0x8000..=0x9fff => {
                 self.ppu.mark_vram_dirty();
@@ -255,6 +267,10 @@ impl Bus {
             IE: Interrupt::empty(),
             IF: Interrupt::empty(),
             n_cycles: 0,
+            dma_running: false,
+            dma_counter: 0,
+            dma_start_n_cyc: 0,
+            dma_start_addr: 0,
             timer: Timer::new(),
             ppu: Ppu::new(),
         }
@@ -289,11 +305,31 @@ impl Bus {
             self.IF.insert(Interrupt::LCDC);
         }
 
+        if self.dma_running {
+            while ((self.dma_counter * 4) as u64) < n_cycles - self.dma_start_n_cyc {
+                let src_idx = (self.dma_start_addr + self.dma_counter) as usize;
+                let dst_idx = (0xfe00 + self.dma_counter) as usize;
+                self.mem[dst_idx] = self.mem[src_idx];
+                self.dma_counter += 1;
+                if self.dma_counter == 160 {
+                    self.dma_running = false;
+                    break;
+                }
+            }
+        }
+
         self.n_cycles = n_cycles;
     }
 
     pub fn render_frame(&mut self) -> &[u8] {
         self.ppu.render_frame(&self.mem)
+    }
+
+    fn initiate_dma(&mut self, addr: u16) {
+        self.dma_running = true;
+        self.dma_counter = 0;
+        self.dma_start_n_cyc = 0;
+        self.dma_start_addr = addr;
     }
 }
 
@@ -445,5 +481,28 @@ mod tests {
 
         assert_eq!(bus.mem_read(register::TIMA), 69);
         assert!(bus.IF.contains(Interrupt::TIMER));
+    }
+
+    #[test]
+    fn test_dma_basic() {
+        let mut bus = Bus::new();
+
+        bus.mem_write(0xc100, 42);
+        bus.mem_write(0xc101, 43);
+        bus.mem_write(0xc19f, 69);
+        bus.mem_write(0xc1a0, 70);
+        bus.mem_write(register::DMA, 0xc1);
+
+        bus.sync(80*4);
+        assert_eq!(bus.mem[0xfe00], 42);
+        assert_eq!(bus.mem[0xfe01], 43);
+        assert_eq!(bus.mem[0xfe9f], 0);
+        assert_eq!(bus.mem[0xfea0], 0);
+
+        bus.sync(160*4);
+        assert_eq!(bus.mem[0xfe00], 42);
+        assert_eq!(bus.mem[0xfe01], 43);
+        assert_eq!(bus.mem[0xfe9f], 69);
+        assert_eq!(bus.mem[0xfea0], 0);
     }
 }
