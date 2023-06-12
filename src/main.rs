@@ -1,5 +1,5 @@
 use std::fs;
-// use std::time::SystemTime;
+use std::time::SystemTime;
 
 use gbem::{Cpu, Mem, run_debugger};
 
@@ -55,6 +55,9 @@ enum Commands {
         /// Start from 0x0000 and load the Nintendo logo into 0x104
         #[arg(long, short)]
         boot_rom: bool,
+        /// Print frame timing info to stderr
+        #[arg(long, short)]
+        time: bool,
     },
 
     /// Run the jsmoo tests
@@ -69,8 +72,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Run { rom_file, debug, boot_rom }) => {
-            run_rom_file(&rom_file, debug, boot_rom);
+        Some(Commands::Run { rom_file, debug, boot_rom, time }) => {
+            run_rom_file(&rom_file, debug, boot_rom, time);
         }
         Some(Commands::TestMoo {opcode, debug } ) => {
             gbem::test_moo(&opcode, debug);
@@ -79,7 +82,7 @@ fn main() {
     }
 }
 
-fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
+fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
     let program = fs::read(rom_file).expect("Could not find rom file");
     eprintln!("Read ROM successfully; {} bytes", program.len());
 
@@ -124,6 +127,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
     eprintln!("Initialized SDL2");
 
 
+    let mut last_frame_time = SystemTime::now();
     let mut next_frame_n_cycle = 0;
     cpu.run_with_callback(move |cpu: &mut Cpu| {
         if cpu.n_cycles < next_frame_n_cycle {
@@ -131,11 +135,23 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
         }
         next_frame_n_cycle += CYCLES_PER_FRAME;
 
-        handle_user_input(&mut event_pump);
+        let sim_time = SystemTime::now();
 
+        handle_user_input(&mut event_pump);
         texture.update(None, &cpu.bus.render_frame(), (SCREEN_DISP_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();
+
+        let disp_time = SystemTime::now();
+
+        if time {
+            eprintln!("Frame time: {} ms ({} cpu, {} render)",
+                      disp_time.duration_since(last_frame_time).unwrap().as_millis(),
+                      sim_time.duration_since(last_frame_time).unwrap().as_millis(),
+                      disp_time.duration_since(sim_time).unwrap().as_millis(),
+            )
+        }
+        last_frame_time = SystemTime::now();
     });
 
     eprintln!("Program terminated after {} cycles", cpu.n_cycles);
