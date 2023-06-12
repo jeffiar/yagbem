@@ -210,8 +210,8 @@ impl Mem for Bus {
         }
 
         match addr {
-            register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
-            register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
+            register::IE => { self.IE = Interrupt::from_bits_truncate(val); }
+            register::IF => { self.IF = Interrupt::from_bits_truncate(val); }
             register::P1 => { self.joypad.write(val); }
             register::LCDC => { self.ppu.set_lcd_control(val); }
             register::LY => { panic!("Register LY (0xff44) is not writeable"); }
@@ -294,6 +294,10 @@ impl Bus {
 
     pub fn sync(&mut self, n_cycles: u64) {
         let nticks = n_cycles - self.n_cycles;
+
+        if self.joypad.should_trigger_intr() {
+            self.IF.insert(Interrupt::INPUT);
+        }
 
         if self.timer.tick(nticks, &mut self.mem) {
             self.IF.insert(Interrupt::TIMER);
