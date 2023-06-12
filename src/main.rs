@@ -2,6 +2,7 @@ use std::fs;
 use std::time::SystemTime;
 
 use gbem::{Cpu, Mem, run_debugger};
+use gbem::joypad::{JoypadButton, Joypad};
 
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -15,20 +16,39 @@ const SCREEN_DISP_Y: u32 = 144;
 
 const PIXEL_SCALE: f32 = 3.0;
 
-fn handle_user_input(event_pump: &mut EventPump) {
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+lazy_static! {
+    static ref KEYMAP: HashMap<Keycode, JoypadButton> = {
+        let mut key_map = HashMap::new();
+        key_map.insert(Keycode::S   , JoypadButton::DOWN);
+        key_map.insert(Keycode::W     , JoypadButton::UP);
+        key_map.insert(Keycode::D  , JoypadButton::RIGHT);
+        key_map.insert(Keycode::A   , JoypadButton::LEFT);
+        key_map.insert(Keycode::Comma  , JoypadButton::SELECT);
+        key_map.insert(Keycode::Period , JoypadButton::START);
+        key_map.insert(Keycode::K      , JoypadButton::BUTTON_A);
+        key_map.insert(Keycode::J      , JoypadButton::BUTTON_B);
+        key_map
+    };
+}
+
+fn handle_user_input(event_pump: &mut EventPump, joypad: &mut Joypad) {
     for event in event_pump.poll_iter() {
         match event {
             Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                 std::process::exit(0);
             },
-            Event::KeyDown { keycode: Some(Keycode::W), .. } => {
+            Event::KeyDown { keycode: Some(keycode), .. } => {
+                if let Some(key) = KEYMAP.get(&keycode) {
+                    joypad.set_button_pressed_status(*key, true);
+                }
             },
-            Event::KeyDown { keycode: Some(Keycode::S), .. } => {
+            Event::KeyUp { keycode: Some(keycode), .. } => {
+                if let Some(key) = KEYMAP.get(&keycode) {
+                    joypad.set_button_pressed_status(*key, false);
+                }
             },
-            Event::KeyDown { keycode: Some(Keycode::A), .. } => {
-            },
-            Event::KeyDown { keycode: Some(Keycode::D), .. } => {
-            }
             _ => {/* do nothing */}
         };
     }
@@ -137,7 +157,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
 
         let sim_time = SystemTime::now();
 
-        handle_user_input(&mut event_pump);
+        handle_user_input(&mut event_pump, &mut cpu.bus.joypad);
         texture.update(None, &cpu.bus.screen(), (SCREEN_DISP_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();

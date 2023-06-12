@@ -4,6 +4,7 @@ pub mod opcodes;
 pub mod ppu;
 pub mod debugger;
 pub mod testmoo;
+pub mod joypad;
 
 pub use cpu::Cpu;
 pub use bus::Mem;

@@ -1,5 +1,6 @@
 use std::io::{stderr, Write};
 use crate::ppu::Ppu;
+use crate::joypad::Joypad;
 
 #[allow(dead_code)]
 pub mod register {
@@ -178,6 +179,7 @@ pub struct Bus {
 
     timer: Timer,
     ppu: Ppu,
+    pub joypad: Joypad,
 }
 
 impl Mem for Bus {
@@ -193,6 +195,8 @@ impl Mem for Bus {
         match addr {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
+            register::P1 => self.joypad.read(),
+            register::LCDC => self.ppu.get_lcd_control(),
             register::SC => 0x00,
             _ => self.mem[addr as usize] ,
         }
@@ -208,6 +212,8 @@ impl Mem for Bus {
         match addr {
             register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
+            register::P1 => { self.joypad.write(val); }
+            register::LCDC => { self.ppu.set_lcd_control(val); }
             register::LY => { panic!("Register LY (0xff44) is not writeable"); }
             register::STAT => {
                 // The bottom three bits are not writeable
@@ -269,6 +275,7 @@ impl Bus {
             dma_start_addr: 0,
             timer: Timer::new(),
             ppu: Ppu::new(),
+            joypad: Joypad::new(),
         }
     }
 

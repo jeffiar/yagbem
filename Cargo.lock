@@ -185,6 +185,7 @@ dependencies = [
  "clap",
  "duplicate",
  "itertools 0.10.5",
+ "lazy_static",
  "sdl2",
  "serde",
  "serde_json",
