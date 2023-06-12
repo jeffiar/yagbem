@@ -1,5 +1,6 @@
 use crate::cpu::Flags;
 use crate::cpu::Cpu;
+use crate::cpu::Status;
 use crate::bus::Mem;
 use crate::bus::Bus;
 use crate::opcodes::Instruction;
@@ -128,7 +129,7 @@ fn run_test(test: &Test, debug: bool) {
         pc : test.initial.pc,
         sp : test.initial.sp,
         interrupt_master_enable : test.initial.ime != 0,
-        running: true,
+        status: Status::Running,
         n_cycles: 0,
         n_instrs: 0,
         bus: Bus::new_flat(),

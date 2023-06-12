@@ -196,6 +196,9 @@ pub fn run_debugger(mut cpu: Cpu) {
         if cpu.sp != old_sp.wrapping_add(2) && cpu.sp != old_sp.wrapping_sub(2) && cpu.sp != old_sp {
             stack_start = cpu.sp;
         }
+        if cpu.sp > stack_start {
+            stack_start = cpu.sp;
+        }
         old_sp = cpu.sp;
 
 
@@ -203,6 +206,7 @@ pub fn run_debugger(mut cpu: Cpu) {
         let mut more_info = vec![String::from(""); 10];
         more_info[0] = format!("n_cycles: {}", cpu.n_cycles);
         more_info[1] = format!("n_instrs: {}", cpu.n_instrs);
+        more_info[2] = format!("stack_start: {:04x}", stack_start);
         let mut j = 3;
         for b in breakpoints.iter() {
             if let Breakpoint::Mem(addr, _) = b {
@@ -305,4 +309,6 @@ pub fn run_debugger(mut cpu: Cpu) {
             }
         }
     });
+
+    println!("Program terminated after {} cycles ({} instructions)", cpu.n_cycles, cpu.n_instrs);
 }

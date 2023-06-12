@@ -29,6 +29,11 @@ impl Condition {
     }
 }
 
+#[derive(PartialEq)]
+pub enum Status {
+    Running, Halted, Stopped,
+}
+
 pub const PC_START: u16 = 0x0100;
 pub const SP_START: u16 = 0xfffe;
 
@@ -45,7 +50,7 @@ pub struct Cpu {
     pub pc: u16,
 
     pub interrupt_master_enable: bool,
-    pub running: bool,
+    pub status: Status,
 
     pub n_cycles: u64,
     pub n_instrs: u64,
@@ -80,7 +85,7 @@ impl Cpu {
             sp: SP_START,
             n_instrs: 0,
             n_cycles: 0,
-            running: true,
+            status: Status::Running,
             interrupt_master_enable: false,
             bus: Bus::new(),
         }
@@ -105,7 +110,7 @@ impl Cpu {
         self.flags = Flags::empty();
         self.pc = PC_START;
         self.sp = SP_START;
-        self.running = true;
+        self.status = Status::Running;
 
         self.interrupt_master_enable = false;
         self.n_instrs = 0;
@@ -116,10 +121,10 @@ impl Cpu {
         self.bus.load(program, 0x0000);
     }
 
-    pub fn run_instructions_and_halt(&mut self, program: &[u8]) {
+    pub fn run_instructions_and_stop(&mut self, program: &[u8]) {
         // self.reset();
         self.bus.load(program, self.pc);
-        self.bus.mem_write(self.pc + program.len() as u16, 0x76); // add HALT
+        self.bus.mem_write(self.pc + program.len() as u16, 0x10); // add STOP
         self.run();
     }
 
@@ -348,9 +353,6 @@ impl Cpu {
 
     #[allow(non_snake_case)]
     fn poll_irq(&self) -> Option<Interrupt> {
-        if !self.interrupt_master_enable {
-            return None;
-        }
         let iflags = self.bus.IE & self.bus.IF;
         
         if iflags.bits() != 0 {
@@ -377,20 +379,37 @@ impl Cpu {
     pub fn run_with_callback<F>(&mut self, mut callback: F) 
     where F: FnMut(&mut Cpu)
     {
-        self.running = true; // TODO how does an interrupt wake up after halt?
-        while self.running {
+        loop {
             callback(self);
 
-            if let Some(interrupt) = self.poll_irq() {
-                self.handle_interrupt(interrupt);
-                // eprintln!("Handling interrupt {:?}", interrupt);
-            } else {
-                let instr = self.fetch_and_decode(self.pc);
-                // eprintln!("{:04x}: {}", self.pc, instr);
-                self.execute_instruction(instr);
+            let pending_interrupt = self.poll_irq();
+            if pending_interrupt.is_some() && self.status == Status::Halted {
+                // Resume execution. NOTE not sure if IF should be reset here.
+                self.status = Status::Running;
             }
 
-            self.bus.sync(self.n_cycles);
+            if self.interrupt_master_enable && pending_interrupt.is_some() {
+                // Jump to the interrupt handler
+                self.handle_interrupt(pending_interrupt.unwrap());
+                self.bus.sync(self.n_cycles);
+                continue;
+            }
+
+            match self.status {
+                Status::Running => {
+                    let instr = self.fetch_and_decode(self.pc);
+                    // eprintln!("{:04x}: {}", self.pc, instr);
+                    self.execute_instruction(instr);
+                    self.bus.sync(self.n_cycles);
+                }
+                Status::Halted => {
+                    self.n_cycles += 4;
+                    self.bus.sync(self.n_cycles);
+                }
+                Status::Stopped => {
+                    return;
+                }
+            }
         }
     }
 
@@ -410,8 +429,8 @@ impl Cpu {
 
         match instr.opcode {
             Opcode::NoOp => {}
-            Opcode::Halt => { self.running = false; }
-            Opcode::Stop => { self.running = false; }
+            Opcode::Halt => { self.status = Status::Halted; }
+            Opcode::Stop => { self.status = Status::Stopped; }
             Opcode::Load8(reg, val) => { self.reg8_write(reg, val); }
             Opcode::LoadReg(dst, src) => {
                 let val = self.reg8_read(src);
@@ -744,8 +763,8 @@ mod tests {
         // LD   H,$c0
         // LD   L,$ee
         // LD   (HL),$56
-        // HALT
-        cpu.run_instructions_and_halt(&[0x26, 0xc0, 0x2e, 0xee, 0x36, 0x56]);
+        // STOP
+        cpu.run_instructions_and_stop(&[0x26, 0xc0, 0x2e, 0xee, 0x36, 0x56]);
         assert_eq!(cpu.h, 0xc0);
         assert_eq!(cpu.l, 0xee);
         assert_eq!(cpu.mem_read(0xc0ee), 0x56);
@@ -758,8 +777,8 @@ mod tests {
         // LD   B,C
         // LD   H,$44
         // LD   (HL),C
-        // HALT
-        cpu.run_instructions_and_halt(&[0x0e, 0x23, 0x41, 0x26, 0x44, 0x71]);
+        // STOP
+        cpu.run_instructions_and_stop(&[0x0e, 0x23, 0x41, 0x26, 0x44, 0x71]);
         assert_eq!(cpu.c, 0x23);
         assert_eq!(cpu.b, 0x23);
         assert_eq!(cpu.h, 0x44);
@@ -776,9 +795,9 @@ mod tests {
         // LD   A,$55
         // LD   E,A     ; E = $55
         // LD   H,E     ; H = $55
-        // HALT
+        // STOP
         let code = [0x3e, 0x33, 0x47, 0x3e, 0x55, 0x5f, 0x63];
-        cpu.run_instructions_and_halt(&code);
+        cpu.run_instructions_and_stop(&code);
         assert_eq!(cpu.b, 0x33);
         assert_eq!(cpu.e, 0x55);
         assert_eq!(cpu.h, 0x55);
@@ -790,7 +809,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         assert_ne!(cpu.a, 0x45);
         cpu.mem_write(0x33a4, 0x45);
-        cpu.run_instructions_and_halt(&[0xfa, 0xa4, 0x33]); //LD   A,($33a4)
+        cpu.run_instructions_and_stop(&[0xfa, 0xa4, 0x33]); //LD   A,($33a4)
         assert_eq!(cpu.a, 0x45);
         assert_eq!(cpu.n_cycles, 16 + 12);
     }
@@ -801,7 +820,7 @@ mod tests {
         cpu.b = 0x55;
         cpu.c = 0xa4;
         cpu.mem_write(0x55a4, 0x69);
-        cpu.run_instructions_and_halt(&[0x0a]); // LD   A,(BC)
+        cpu.run_instructions_and_stop(&[0x0a]); // LD   A,(BC)
         assert_eq!(cpu.a, 0x69);
         assert_eq!(cpu.n_cycles, 8 + 12);
     }
@@ -810,7 +829,7 @@ mod tests {
     fn store_indirect_immediate_0xea() {
         let mut cpu = Cpu::new_flat();
         cpu.a = 0x2f;
-        cpu.run_instructions_and_halt(&[0xea, 0x52, 0xcc]); // LD   (DE),A
+        cpu.run_instructions_and_stop(&[0xea, 0x52, 0xcc]); // LD   (DE),A
         assert_eq!(cpu.mem_read(0xcc52), 0x2f);
         assert_eq!(cpu.n_cycles, 16 + 12);
     }
@@ -821,7 +840,7 @@ mod tests {
         cpu.d = 0x11;
         cpu.e = 0x22;
         cpu.a = 0x42;
-        cpu.run_instructions_and_halt(&[0x12]); // LD   (DE),A
+        cpu.run_instructions_and_stop(&[0x12]); // LD   (DE),A
         assert_eq!(cpu.mem_read(0x1122), 0x42);
         assert_eq!(cpu.mem_read(0x2211), 0x00);
         assert_eq!((cpu.d, cpu.e, cpu.a), (0x11, 0x22, 0x42));
@@ -833,7 +852,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.c = 0xa4;
         cpu.mem_write(0xffa4, 0x69);
-        cpu.run_instructions_and_halt(&[0xf2]); // LD   A,($ff00+C)
+        cpu.run_instructions_and_stop(&[0xf2]); // LD   A,($ff00+C)
         assert_eq!(cpu.a, 0x69);
         assert_eq!(cpu.n_cycles, 8 + 12);
     }
@@ -843,7 +862,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.c = 0xcc;
         cpu.a = 0xaa;
-        cpu.run_instructions_and_halt(&[0xe2]); // LD   ($ff00+C),A
+        cpu.run_instructions_and_stop(&[0xe2]); // LD   ($ff00+C),A
         assert_eq!(cpu.mem_read(0xffcc), 0xaa);
         assert_eq!(cpu.n_cycles, 8 + 12);
     }
@@ -852,7 +871,7 @@ mod tests {
     fn load_indirect_zeropage_immediate_0xf0() {
         let mut cpu = Cpu::new_flat();
         cpu.mem_write(0xff32, 0x69);
-        cpu.run_instructions_and_halt(&[0xf0, 0x32]); // LD   A,($ff00+$32)
+        cpu.run_instructions_and_stop(&[0xf0, 0x32]); // LD   A,($ff00+$32)
         assert_eq!(cpu.a, 0x69);
         assert_eq!(cpu.n_cycles, 12 + 12);
     }
@@ -861,7 +880,7 @@ mod tests {
     fn store_indirect_zeropage_immediate_0xe0() {
         let mut cpu = Cpu::new_flat();
         cpu.a = 0xab;
-        cpu.run_instructions_and_halt(&[0xe0, 0x56]); // LD   ($ff00+$56),A
+        cpu.run_instructions_and_stop(&[0xe0, 0x56]); // LD   ($ff00+$56),A
         assert_eq!(cpu.mem_read(0xff56), 0xab);
         assert_eq!(cpu.n_cycles, 12 + 12);
     }
@@ -875,11 +894,11 @@ mod tests {
             ROI::Reg(r) => { // Test the version between operands A and B
                 cpu.a = operand_1;
                 cpu.reg8_write(r, operand_2);
-                cpu.run_instructions_and_halt(&[opcode]);
+                cpu.run_instructions_and_stop(&[opcode]);
             }
             ROI::Immediate => { // Test the version with an immediate operand
                 cpu.a = operand_1;
-                cpu.run_instructions_and_halt(&[opcode, operand_2]);
+                cpu.run_instructions_and_stop(&[opcode, operand_2]);
             }
         }
         assert_eq!(cpu.a, result);
@@ -1010,17 +1029,17 @@ mod tests {
         };
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0x8b]);
+        cpu.run_instructions_and_stop(&[0x8b]);
         assert_eq!(cpu.a, 0xf1);
         assert_eq!(cpu.flags, Flags::H);
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0xce, 0x3b]);
+        cpu.run_instructions_and_stop(&[0xce, 0x3b]);
         assert_eq!(cpu.a, 0x1d);
         assert_eq!(cpu.flags, Flags::C);
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0x8e]);
+        cpu.run_instructions_and_stop(&[0x8e]);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.flags, Flags::H | Flags::Z | Flags::C);
     }
@@ -1038,17 +1057,17 @@ mod tests {
         };
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0x9c]);
+        cpu.run_instructions_and_stop(&[0x9c]);
         assert_eq!(cpu.a, 0x10);
         assert_eq!(cpu.flags, Flags::N);
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0xde, 0x3a]);
+        cpu.run_instructions_and_stop(&[0xde, 0x3a]);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.flags, Flags::N | Flags::Z);
 
         let mut cpu = init_cpu();
-        cpu.run_instructions_and_halt(&[0x9e]);
+        cpu.run_instructions_and_stop(&[0x9e]);
         assert_eq!(cpu.a, 0xeb);
         assert_eq!(cpu.flags, Flags::N | Flags::H | Flags::C);
     }
@@ -1058,17 +1077,17 @@ mod tests {
     fn inc() {
         let mut cpu = Cpu::new_flat();
         cpu.b = 3;
-        cpu.run_instructions_and_halt(&[0x04]); // INC B
+        cpu.run_instructions_and_stop(&[0x04]); // INC B
         assert_eq!(cpu.b, 4);
         assert_eq!(cpu.flags, Flags::empty());
         // check overflow
         cpu.d = 0xff;
-        cpu.run_instructions_and_halt(&[0x14]); // INC D
+        cpu.run_instructions_and_stop(&[0x14]); // INC D
         assert_eq!(cpu.d, 0);
         assert_eq!(cpu.flags, Flags::Z | Flags::H);
         // check half-carry flag
         cpu.d = 0x0f;
-        cpu.run_instructions_and_halt(&[0x14]); // INC D
+        cpu.run_instructions_and_stop(&[0x14]); // INC D
         assert_eq!(cpu.d, 0x10);
         assert_eq!(cpu.flags, Flags::H);
     }
@@ -1077,20 +1096,20 @@ mod tests {
     fn dec() {
         let mut cpu = Cpu::new_flat();
         cpu.b = 2;
-        cpu.run_instructions_and_halt(&[0x05]); // DEC B
+        cpu.run_instructions_and_stop(&[0x05]); // DEC B
         assert_eq!(cpu.b, 1);
         assert_eq!(cpu.flags, Flags::N);
         // check zero-flag
-        cpu.run_instructions_and_halt(&[0x05]); // DEC B
+        cpu.run_instructions_and_stop(&[0x05]); // DEC B
         assert_eq!(cpu.b, 0);
         assert_eq!(cpu.flags, Flags::N | Flags::Z);
         // check underflow
-        cpu.run_instructions_and_halt(&[0x05]); // INC D
+        cpu.run_instructions_and_stop(&[0x05]); // INC D
         assert_eq!(cpu.b, 0xff);
         assert_eq!(cpu.flags, Flags::N | Flags::H);
         // check carry flag is not affected
         cpu.flags.set(Flags::C, true);
-        cpu.run_instructions_and_halt(&[0x05]); // INC D
+        cpu.run_instructions_and_stop(&[0x05]); // INC D
         assert_eq!(cpu.b, 0xfe);
         assert_eq!(cpu.flags, Flags::N | Flags::C);
     }
@@ -1098,12 +1117,12 @@ mod tests {
     #[test]
     fn load_16bit_immediate() {
         let mut cpu = Cpu::new_flat();
-        cpu.run_instructions_and_halt(&[0x11, 0x52, 0xaa]); // LD   DE,$76aa
+        cpu.run_instructions_and_stop(&[0x11, 0x52, 0xaa]); // LD   DE,$76aa
         assert_eq!(cpu.d, 0xaa);
         assert_eq!(cpu.e, 0x52);
-        cpu.run_instructions_and_halt(&[0x31, 0x34, 0x12]); // LD   SP,$1234
+        cpu.run_instructions_and_stop(&[0x31, 0x34, 0x12]); // LD   SP,$1234
         assert_eq!(cpu.sp, 0x1234);
-        cpu.run_instructions_and_halt(&[0x21, 0x21, 0x43]); // LD   HL,$4321
+        cpu.run_instructions_and_stop(&[0x21, 0x21, 0x43]); // LD   HL,$4321
         assert_eq!(cpu.h, 0x43);
         assert_eq!(cpu.l, 0x21);
         assert_eq!(cpu.reg16_read(OpReg16::HL), 0x4321);
@@ -1114,7 +1133,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.h = 0x55;
         cpu.l = 0x23;
-        cpu.run_instructions_and_halt(&[0xf9]); // LD   SP,HL
+        cpu.run_instructions_and_stop(&[0xf9]); // LD   SP,HL
         assert_eq!(cpu.sp, 0x5523);
     }
 
@@ -1124,7 +1143,7 @@ mod tests {
         cpu.b = 0x44; // hi reg
         cpu.c = 0x55; // lo reg
         cpu.sp = 0xfffe;
-        cpu.run_instructions_and_halt(&[0xc5]); // PUSH BC
+        cpu.run_instructions_and_stop(&[0xc5]); // PUSH BC
         assert_eq!(cpu.sp, 0xfffc);
         assert_eq!(cpu.mem_read(0xfffc), 0x55); // lo addr, lo reg
         assert_eq!(cpu.mem_read(0xfffd), 0x44); // hi addr, hi reg
@@ -1136,12 +1155,12 @@ mod tests {
         cpu.sp = 0xfffe;
         cpu.a = 0xff;
         // ADD  A,$02 ; A = 0x01, F = 0b00010000 just carry flag
-        cpu.run_instructions_and_halt(&[0xc6, 0x02]);
+        cpu.run_instructions_and_stop(&[0xc6, 0x02]);
         assert_eq!(cpu.a, 0x01);
         assert_eq!(cpu.flags, Flags::C | Flags::H);
         assert_eq!(cpu.sp, 0xfffe);
         // PUSH AF
-        cpu.run_instructions_and_halt(&[0xf5]);
+        cpu.run_instructions_and_stop(&[0xf5]);
         assert_eq!(cpu.sp, 0xfffc);
         assert_eq!(cpu.mem_read(0xfffd), 0x01);
         assert_eq!(cpu.mem_read(0xfffc), (Flags::C | Flags::H).bits());
@@ -1154,7 +1173,7 @@ mod tests {
         cpu.mem_write(0xfff0, 0x5f); //lo address, lo bits
         cpu.mem_write(0xfff1, 0x3c); //hi address, hi bits
         // POP  DE
-        cpu.run_instructions_and_halt(&[0xd1]);
+        cpu.run_instructions_and_stop(&[0xd1]);
         assert_eq!(cpu.d, 0x3c); //hi reg
         assert_eq!(cpu.e, 0x5f); //lo reg
         assert_eq!(cpu.sp, 0xfff2);
@@ -1167,12 +1186,12 @@ mod tests {
         // LD H,$11
         // LD L,$20
         // PUSH HL
-        cpu.run_instructions_and_halt(&[0x26, 0x11, 0x2e, 0x20, 0xe5]);
+        cpu.run_instructions_and_stop(&[0x26, 0x11, 0x2e, 0x20, 0xe5]);
         assert_eq!(cpu.sp, 0xffee);
         assert_eq!(cpu.h, 0x11);
         assert_eq!(cpu.l, 0x20);
         // POP  AF
-        cpu.run_instructions_and_halt(&[0xf1]);
+        cpu.run_instructions_and_stop(&[0xf1]);
         assert_eq!(cpu.sp, 0xfff0);
         assert_eq!(cpu.a, 0x11);
         assert_eq!(cpu.flags.bits(), 0x20);
@@ -1183,7 +1202,7 @@ mod tests {
     fn savesp() {
         let mut cpu = Cpu::new_flat();
         cpu.sp = 0xfff8;
-        cpu.run_instructions_and_halt(&[0x08, 0x00, 0xc1]);
+        cpu.run_instructions_and_stop(&[0x08, 0x00, 0xc1]);
         assert_eq!(cpu.sp, 0xfff8);
         assert_eq!(cpu.mem_read16(0xc100), 0xfff8);
     }
@@ -1192,14 +1211,14 @@ mod tests {
     fn loadhlsprelative() {
         let mut cpu = Cpu::new_flat();
         cpu.sp = 0xfff8;
-        cpu.run_instructions_and_halt(&[0xf8, 0x02]);
+        cpu.run_instructions_and_stop(&[0xf8, 0x02]);
         assert_eq!(cpu.sp, 0xfff8);
         assert_eq!(cpu.reg16_read(OpReg16::HL), 0xfffa);
         assert_eq!(cpu.flags, Flags::empty());
 
         cpu.flags = Flags::C | Flags::Z; // set some random flags
         cpu.sp = 0xfff8;
-        cpu.run_instructions_and_halt(&[0xf8, 0xf0]);
+        cpu.run_instructions_and_stop(&[0xf8, 0xf0]);
         assert_eq!(cpu.sp, 0xfff8);
         assert_eq!(cpu.reg16_read(OpReg16::HL), 0xffe8);
         assert_eq!(cpu.flags, Flags::C);
@@ -1208,8 +1227,8 @@ mod tests {
     #[test]
     fn jump_unconditional() {
         let mut cpu = Cpu::new_flat();
-        cpu.bus.mem_write(0x1234, 0x76);
-        cpu.run_instructions_and_halt(&[0xc3, 0x34, 0x12]); // JP $1234
+        cpu.bus.mem_write(0x1234, 0x10);
+        cpu.run_instructions_and_stop(&[0xc3, 0x34, 0x12]); // JP $1234
         assert_eq!(cpu.pc, 0x1235);
     }
 
@@ -1218,8 +1237,8 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.h = 0x12;
         cpu.l = 0x34;
-        cpu.bus.mem_write(0x1234, 0x76);
-        cpu.run_instructions_and_halt(&[0xe9]); // JP (HL)
+        cpu.bus.mem_write(0x1234, 0x10);
+        cpu.run_instructions_and_stop(&[0xe9]); // JP (HL)
         assert_eq!(cpu.pc, 0x1235);
     }
 
@@ -1228,9 +1247,9 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.pc = 0x2000;
         cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
-        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x1ff1, 0x10); // STOP
         //                              2000  2001  2002
-        cpu.run_instructions_and_halt(&[0x18, -18i8 as u8, 0x04]); // JR -$12 \ INC B
+        cpu.run_instructions_and_stop(&[0x18, -18i8 as u8, 0x04]); // JR -$12 \ INC B
         assert_eq!(cpu.pc, 0x1ff2);
         assert_eq!(cpu.a, 1);
         assert_eq!(cpu.b, 0);
@@ -1241,9 +1260,9 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.pc = 0x2000;
         cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
-        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x1ff1, 0x10); // STOP
         //                              // JR +$02  INC B   INC D  INC H
-        cpu.run_instructions_and_halt(&[0x18, 2, 0x04, 0x14,  0x24 ]);
+        cpu.run_instructions_and_stop(&[0x18, 2, 0x04, 0x14,  0x24 ]);
         assert_eq!(cpu.pc, 0x2006);
         assert_eq!(cpu.a, 0);
         assert_eq!(cpu.b, 0);
@@ -1255,12 +1274,12 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.flags = starting_flags;
         cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
-        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x1ff1, 0x10); // STOP
         cpu.bus.mem_write(0x2000, code[0]); //  | Jump instruction here
         cpu.bus.mem_write(0x2001, code[1]); //  | (pad with NOP to make 3 bytes)
         cpu.bus.mem_write(0x2002, code[2]); //  |
         cpu.bus.mem_write(0x2003, 0x04); // INC B
-        cpu.bus.mem_write(0x2004, 0x76); // HALT
+        cpu.bus.mem_write(0x2004, 0x10); // STOP
                                          //
         cpu.pc = 0x2000;
         cpu.run();
@@ -1341,24 +1360,24 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.pc = 0x8000;
         cpu.sp = 0xfffe;
-        cpu.bus.mem_write(0x1234, 0x76);
-        cpu.run_instructions_and_halt(&[0xcd, 0x34, 0x12]);
+        cpu.bus.mem_write(0x1234, 0x10);
+        cpu.run_instructions_and_stop(&[0xcd, 0x34, 0x12]);
         assert_eq!(cpu.mem_read(0xfffd), 0x80);
         assert_eq!(cpu.mem_read(0xfffc), 0x03);
         assert_eq!(cpu.sp, 0xfffc);
-        assert_eq!(cpu.pc, 0x1235); // +1 for the HALT
+        assert_eq!(cpu.pc, 0x1235); // +1 for the STOP
     }
 
     fn test_call_conditional(code: [u8; 3], starting_flags: Flags, expected_branch: bool) {
         let mut cpu = Cpu::new_flat();
         cpu.flags = starting_flags;
         cpu.bus.mem_write(0x1ff0, 0x3c); // INC A
-        cpu.bus.mem_write(0x1ff1, 0x76); // HALT
+        cpu.bus.mem_write(0x1ff1, 0x10); // STOP
         cpu.bus.mem_write(0x2000, code[0]); //  | Call instruction here
         cpu.bus.mem_write(0x2001, code[1]); //  | (pad with NOP to make 3 bytes)
         cpu.bus.mem_write(0x2002, code[2]); //  |
         cpu.bus.mem_write(0x2003, 0x04); // INC B
-        cpu.bus.mem_write(0x2004, 0x76); // HALT
+        cpu.bus.mem_write(0x2004, 0x10); // STOP
                                          //
         cpu.sp = 0xfffe;
         cpu.pc = 0x2000;
@@ -1440,8 +1459,8 @@ mod tests {
         cpu.bus.mem_write(0x9000, 0x3c); //INC A
         cpu.bus.mem_write(0x9001, 0xc9); //RET
         cpu.bus.mem_write(0x9002, 0x14); //INC D
-        cpu.bus.mem_write(0x9003, 0x76); //HALT
-        cpu.run_instructions_and_halt(&[0xcd, 0x00, 0x90, 0x04]); //CALL $9000 \ INC B
+        cpu.bus.mem_write(0x9003, 0x10); //STOP
+        cpu.run_instructions_and_stop(&[0xcd, 0x00, 0x90, 0x04]); //CALL $9000 \ INC B
         assert_eq!(cpu.pc, 0x8005);
         assert_eq!(cpu.a, 1);
         assert_eq!(cpu.b, 1);
@@ -1460,10 +1479,10 @@ mod tests {
         cpu.interrupt_master_enable = false;
         cpu.bus.mem_write(0x1000, 0xd9); // RETI
         cpu.bus.mem_write(0x1001, 0x04);     // INC B
-        cpu.bus.mem_write(0x1002, 0x76);     // HALT
+        cpu.bus.mem_write(0x1002, 0x10);     // STOP
                                              // ...
         cpu.bus.mem_write(0x8000, 0x3c);     // INC A
-        cpu.bus.mem_write(0x8001, 0x76);     // HALT
+        cpu.bus.mem_write(0x8001, 0x10);     // STOP
                                              //
         cpu.run();
         assert_eq!(cpu.a, 1);
@@ -1485,10 +1504,10 @@ mod tests {
         cpu.pc = 0x1000;
         cpu.bus.mem_write(0x1000, ret_code[0]); // RET cc
         cpu.bus.mem_write(0x1001, 0x04);     // INC B
-        cpu.bus.mem_write(0x1002, 0x76);     // HALT
+        cpu.bus.mem_write(0x1002, 0x10);     // STOP
                                              // ...
         cpu.bus.mem_write(0x8000, 0x3c);     // INC A
-        cpu.bus.mem_write(0x8001, 0x76);     // HALT
+        cpu.bus.mem_write(0x8001, 0x10);     // STOP
                                              //
         cpu.flags = starting_flags;
         cpu.run();
@@ -1560,18 +1579,18 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.b = 0x43;
         cpu.c = 0xff;
-        cpu.run_instructions_and_halt(&[0x03]); //INC BC
+        cpu.run_instructions_and_stop(&[0x03]); //INC BC
         assert_eq!(cpu.b, 0x44);
         assert_eq!(cpu.c, 0x00);
         assert_eq!(cpu.flags, Flags::empty());
 
-        cpu.run_instructions_and_halt(&[0x03]); //INC BC
+        cpu.run_instructions_and_stop(&[0x03]); //INC BC
         assert_eq!(cpu.b, 0x44);
         assert_eq!(cpu.c, 0x01);
         assert_eq!(cpu.flags, Flags::empty());
 
         cpu.sp = 0xffff;
-        cpu.run_instructions_and_halt(&[0x33]); //INC SP
+        cpu.run_instructions_and_stop(&[0x33]); //INC SP
         assert_eq!(cpu.sp, 0x0000);
         assert_eq!(cpu.flags, Flags::empty());
     }
@@ -1581,21 +1600,21 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.b = 0x43;
         cpu.c = 0xff;
-        cpu.run_instructions_and_halt(&[0x0b]); //DEC BC
+        cpu.run_instructions_and_stop(&[0x0b]); //DEC BC
         assert_eq!(cpu.b, 0x43);
         assert_eq!(cpu.c, 0xfe);
         assert_eq!(cpu.flags, Flags::empty());
 
         cpu.d = 0x2a;
         cpu.e = 0x00;
-        cpu.run_instructions_and_halt(&[0x1b]); //DEC DE
+        cpu.run_instructions_and_stop(&[0x1b]); //DEC DE
         assert_eq!(cpu.d, 0x29);
         assert_eq!(cpu.e, 0xff);
         assert_eq!(cpu.flags, Flags::empty());
 
         cpu.h = 0x00;
         cpu.l = 0x00;
-        cpu.run_instructions_and_halt(&[0x2b]); // or not to be... DEC HL
+        cpu.run_instructions_and_stop(&[0x2b]); // or not to be... DEC HL
         assert_eq!(cpu.h, 0xff);
         assert_eq!(cpu.l, 0xff);
         assert_eq!(cpu.flags, Flags::empty());
@@ -1608,7 +1627,7 @@ mod tests {
         cpu.l = 0x23;
         cpu.b = 0x06;
         cpu.c = 0x05;
-        cpu.run_instructions_and_halt(&[0x09]); // ADD HL,BC
+        cpu.run_instructions_and_stop(&[0x09]); // ADD HL,BC
         assert_eq!(cpu.h, 0x90);
         assert_eq!(cpu.l, 0x28);
         assert_eq!(cpu.flags, Flags::H);
@@ -1619,7 +1638,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.h = 0x8a;
         cpu.l = 0x23;
-        cpu.run_instructions_and_halt(&[0x29]); // ADD HL,HL
+        cpu.run_instructions_and_stop(&[0x29]); // ADD HL,HL
         assert_eq!(cpu.h, 0x14);
         assert_eq!(cpu.l, 0x46);
         assert_eq!(cpu.flags, Flags::C | Flags::H);
@@ -1629,10 +1648,10 @@ mod tests {
     fn add_sp() {
         let mut cpu = Cpu::new_flat();
         cpu.sp = 0xfff8;
-        cpu.run_instructions_and_halt(&[0xe8, 2]); // ADD SP, 2
+        cpu.run_instructions_and_stop(&[0xe8, 2]); // ADD SP, 2
         assert_eq!(cpu.sp, 0xfffa);
         assert_eq!(cpu.flags, Flags::empty());
-        cpu.run_instructions_and_halt(&[0xe8, 6]); // ADD SP, 6
+        cpu.run_instructions_and_stop(&[0xe8, 6]); // ADD SP, 6
         assert_eq!(cpu.sp, 0x00);
         assert_eq!(cpu.flags, Flags::C | Flags::H);
     }
@@ -1643,7 +1662,7 @@ mod tests {
         cpu.h = 0xaf;
         cpu.l = 0xff;
         cpu.a = 0x56;
-        cpu.run_instructions_and_halt(&[0x22]); // LD (HL+),A
+        cpu.run_instructions_and_stop(&[0x22]); // LD (HL+),A
         assert_eq!(cpu.mem_read(0xafff), 0x56);
         assert_eq!(cpu.h, 0xb0);
         assert_eq!(cpu.l, 0x00);
@@ -1655,7 +1674,7 @@ mod tests {
         cpu.h = 0x40;
         cpu.l = 0x00;
         cpu.a = 0x05;
-        cpu.run_instructions_and_halt(&[0x32]); // LD (HL-),A
+        cpu.run_instructions_and_stop(&[0x32]); // LD (HL-),A
         assert_eq!(cpu.mem_read(0x4000), 0x05);
         assert_eq!(cpu.h, 0x3f);
         assert_eq!(cpu.l, 0xff);
@@ -1667,7 +1686,7 @@ mod tests {
         cpu.h = 0x01;
         cpu.l = 0xff;
         cpu.mem_write(0x1ff, 0x56);
-        cpu.run_instructions_and_halt(&[0x2a]); // LD A,(HL+)
+        cpu.run_instructions_and_stop(&[0x2a]); // LD A,(HL+)
         assert_eq!(cpu.a, 0x56);
         assert_eq!(cpu.h, 0x02);
         assert_eq!(cpu.l, 0x00);
@@ -1679,7 +1698,7 @@ mod tests {
         cpu.h = 0x8a;
         cpu.l = 0x5c;
         cpu.mem_write(0x8a5c, 0x3c);
-        cpu.run_instructions_and_halt(&[0x3a]); // LD A,(HL-)
+        cpu.run_instructions_and_stop(&[0x3a]); // LD A,(HL-)
         assert_eq!(cpu.a, 0x3c);
         assert_eq!(cpu.h, 0x8a);
         assert_eq!(cpu.l, 0x5b);
@@ -1689,7 +1708,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.reg8_write(reg, start_val);
         cpu.flags = start_flags;
-        cpu.run_instructions_and_halt(&opcode);
+        cpu.run_instructions_and_stop(&opcode);
         assert_eq!(cpu.reg8_read(reg), end_val);
         assert_eq!(cpu.flags, end_flags);
     }
@@ -1826,7 +1845,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.a = 0x35;
         cpu.flags = Flags::C;
-        cpu.run_instructions_and_halt(&[0x2f]);
+        cpu.run_instructions_and_stop(&[0x2f]);
         assert_eq!(cpu.a, 0xca);
         assert_eq!(cpu.flags, Flags::C | Flags::H | Flags::N);
     }
@@ -1836,7 +1855,7 @@ mod tests {
         let mut cpu = Cpu::new_flat();
         cpu.a = 0x35;
         cpu.flags = Flags::C | Flags::H | Flags::N | Flags::Z;
-        cpu.run_instructions_and_halt(&[0x3f]);
+        cpu.run_instructions_and_stop(&[0x3f]);
         assert_eq!(cpu.a, 0x35);
         assert_eq!(cpu.flags, Flags::Z);
     }
@@ -1845,7 +1864,7 @@ mod tests {
     fn ccf_2() {
         let mut cpu = Cpu::new_flat();
         cpu.flags = Flags::empty();
-        cpu.run_instructions_and_halt(&[0x3f]);
+        cpu.run_instructions_and_stop(&[0x3f]);
         assert_eq!(cpu.flags, Flags::C);
     }
 
@@ -1853,7 +1872,7 @@ mod tests {
     fn ccf_3() {
         let mut cpu = Cpu::new_flat();
         cpu.flags = Flags::C;
-        cpu.run_instructions_and_halt(&[0x3f]);
+        cpu.run_instructions_and_stop(&[0x3f]);
         assert_eq!(cpu.flags, Flags::empty());
     }
 
@@ -1861,7 +1880,7 @@ mod tests {
     fn scf() {
         let mut cpu = Cpu::new_flat();
         cpu.flags = Flags::C | Flags::H | Flags::N | Flags::Z;
-        cpu.run_instructions_and_halt(&[0x37]);
+        cpu.run_instructions_and_stop(&[0x37]);
         assert_eq!(cpu.flags, Flags::C | Flags::Z);
     }
 
@@ -1869,7 +1888,7 @@ mod tests {
     fn scf_2() {
         let mut cpu = Cpu::new_flat();
         cpu.flags = Flags::empty();
-        cpu.run_instructions_and_halt(&[0x37]);
+        cpu.run_instructions_and_stop(&[0x37]);
         assert_eq!(cpu.flags, Flags::C);
     }
 }
