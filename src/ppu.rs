@@ -18,13 +18,11 @@ pub struct Ppu {
 
     should_trigger_vblank: bool,
     should_trigger_stat: bool,
-    stat_irq_line: bool,
+    stat_intr_line: bool,
+    mode: Mode,
 
     background: Frame,
     screen: Frame,
-
-    background_dirty: bool,
-    screen_dirty: bool,
 }
 
 pub struct Frame {
@@ -34,7 +32,7 @@ pub struct Frame {
 }
 
 #[derive(PartialEq, Copy, Clone)]
-enum Stat {
+enum Mode {
     Hblank = 0,
     Vblank = 1,
     OamScan = 2,
@@ -89,66 +87,65 @@ impl Ppu {
             dot_num: 0,
             line_num: 0,
             frame_num: 0,
+            stat_intr_line: false,
+            mode: Mode::OamScan,
+
             should_trigger_vblank: false,
             should_trigger_stat: false,
-            stat_irq_line: false,
 
             background: Frame::new(SCREEN_FULL_X, SCREEN_FULL_Y),
             screen: Frame::new(SCREEN_DISP_X, SCREEN_DISP_Y),
+        }
+    }
 
-            background_dirty: true,
-            screen_dirty: true,
+    fn determine_mode(dot_num: u64, line_num: u64) -> Mode {
+        // Don't worry about variable length drawing time for now
+        if line_num >= VBLANK_LINE_NUM {
+            Mode::Vblank
+        } else {
+            match dot_num {
+                0..=80 => Mode::OamScan,
+                81..=252 => Mode::Drawing,
+                _ => Mode::Hblank,
+            }
         }
     }
 
     pub fn tick(&mut self, nticks: u64, mem: &mut [u8]) {
-        let old_stat_irq_line = self.stat_irq_line;
-        let old_stat = mem[register::STAT as usize];
-
+        // update dot, line, and frame numbers
         self.dot_num += nticks;
         if self.dot_num > CYCLES_PER_LINE {
             self.dot_num -= CYCLES_PER_LINE;
             self.line_num += 1;
-
-            if self.line_num == VBLANK_LINE_NUM {
-                self.should_trigger_vblank = true;
-            }
         }
-
         if self.line_num > LINES_PER_FRAME {
             self.line_num -= LINES_PER_FRAME;
             self.frame_num += 1;
         }
 
-        // Detect what "mode" the current LCD screen is, using constant
-        // length drawing per scanline for now...
-        let mode = if self.line_num >= VBLANK_LINE_NUM {
-            Stat::Vblank
-        } else {
-            match self.dot_num {
-                0..=80 => Stat::OamScan,
-                81..=252 => Stat::Drawing,
-                _ => Stat::Hblank,
-            }
-        };
+        let old_stat_intr_line = self.stat_intr_line;
+        let old_mode = self.mode;
 
-        let line_match = self.line_num == mem[register::LCY as usize] as u64;
-        let stat = (line_match as u8) << 2 | mode as u8;
-        assert_eq!(stat & 0xf8, 0); // only lower 3 bits should be set here
+        let new_match = self.line_num == mem[register::LCY as usize] as u64;
+        let new_mode = Ppu::determine_mode(self.dot_num, self.line_num);
+        let new_stat_flags = StatFlags::from_bits_truncate(mem[register::STAT as usize]);
+        let new_stat_reg = StatReg::new(new_stat_flags, new_match, new_mode);
+        let new_stat_intr_line = new_stat_reg.intr_condition_met();
 
-        // Check for LCDC STAT interrupt triggers
-        self.stat_irq_line = (mode == Stat::Hblank && (old_stat & (1 << 3)) != 0) 
-                            || (mode == Stat::Vblank && (old_stat & (1 << 4)) != 0) 
-                            || (mode == Stat::OamScan && (old_stat & (1 << 5)) != 0) 
-                            || (line_match && (old_stat & (1 << 6)) != 0);
-        // Trigger interrupt on rising edge
-        if !old_stat_irq_line && self.stat_irq_line {
+        if (new_mode == Mode::Drawing) && (old_mode != Mode::Drawing) {
+            self.draw_line(mem);
+        }
+        if (new_mode == Mode::Vblank) && (old_mode != Mode::Vblank) {
+            self.should_trigger_vblank = true;
+        }
+        if new_stat_intr_line && !old_stat_intr_line {
             self.should_trigger_stat = true;
         }
 
-        // write to memory
-        mem[register::STAT as usize] = (stat & 0x7) | (old_stat & 0xf8);
+        mem[register::STAT as usize] = new_stat_reg.to_u8();
         mem[register::LY as usize] = self.line_num as u8;
+        self.stat_intr_line = new_stat_intr_line;
+        self.mode = new_mode;
     }
 
     pub fn line_num(&self) -> u8 { self.line_num as u8 }
@@ -182,7 +179,6 @@ impl Ppu {
                 addr += 1;
             }
         }
-        self.background_dirty = false;
     }
 
     fn update_screen(&mut self, mem: &[u8]) {
@@ -200,22 +196,49 @@ impl Ppu {
     }
 
     pub fn render_frame(&mut self, mem: &[u8]) -> &[u8] {
-        if self.background_dirty {
-            self.update_background(mem);
-        }
-
-        if self.screen_dirty {
-            self.update_screen(mem);
-        }
-
+        self.update_background(mem);
+        self.update_screen(mem);
         &self.screen.data
     }
 
-    pub fn mark_vram_dirty(&mut self) {
-        self.background_dirty = true;
+    fn draw_line(&mut self, mem: &[u8]) {
+        todo!();
     }
 
 }
 
-const PALETTE: [(u8,u8,u8); 4] = [ (255, 255, 255), (192, 192, 192), (128, 128, 128), (64, 64, 64)];
+use bitflags::bitflags;
+bitflags! {
+    struct StatFlags: u8 {
+        const LINEMATCH = 1 << 6;
+        const OAM       = 1 << 5;
+        const VBLANK    = 1 << 4;
+        const HBLANK    = 1 << 3;
+    }
+}
+
+struct StatReg {
+    flags: StatFlags,
+    line_match: bool,
+    mode: Mode,
+}
+
+impl StatReg {
+    fn new(flags: StatFlags, line_match: bool, mode: Mode) -> StatReg {
+        StatReg { flags, line_match, mode }
+    }
+
+    fn intr_condition_met(&self) -> bool {
+        (self.mode == Mode::Hblank  &&  self.flags.contains(StatFlags::HBLANK))
+            ||(self.mode == Mode::Vblank  &&  self.flags.contains(StatFlags::VBLANK))
+            ||(self.mode == Mode::OamScan &&  self.flags.contains(StatFlags::OAM))
+            ||(self.line_match && self.flags.contains(StatFlags::LINEMATCH))
+    }
+
+    fn to_u8(&self) -> u8 {
+        self.flags.bits() | (self.line_match as u8) << 2 | (self.mode as u8)
+    }
+}
+
+const PALETTE: [(u8,u8,u8); 4] = [ (0xff, 0xff, 0xff), (0xaa, 0xaa, 0xaa), (0x55, 0x55, 0x55), (0, 0, 0)];
 
