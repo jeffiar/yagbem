@@ -386,6 +386,7 @@ impl Cpu {
             if pending_interrupt.is_some() && self.status == Status::Halted {
                 // Resume execution. NOTE not sure if IF should be reset here.
                 self.status = Status::Running;
+                // eprintln!("Resuming executing after interrupt {:?}, n_cyc = {}", pending_interrupt, self.n_cycles)
             }
 
             if self.interrupt_master_enable && pending_interrupt.is_some() {
@@ -420,6 +421,7 @@ impl Cpu {
         self.push_onto_stack(self.pc);
         self.pc = Interrupt::handler_addr(interrupt);
         self.n_cycles += 20;
+        self.n_instrs += 1;
     }
 
     pub fn execute_instruction(&mut self, instr: Instruction) {

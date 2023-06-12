@@ -18,6 +18,7 @@ enum DebugCommand<'a> {
     WatchReg(&'a str),
     Info,
     Delete(Option<usize>),
+    Print(u16),
 }
 
 fn read_debugger_command() -> DebugCommand<'static> {
@@ -103,6 +104,23 @@ fn read_debugger_command() -> DebugCommand<'static> {
                 Some(_) => {
                     println!("Info command takes no arguments (for now)");
                     read_debugger_command()
+                }
+            }
+        }
+        Some("p") | Some("print") => {
+            match words.next() {
+                None => { 
+                    println!("Address not specified");
+                    read_debugger_command()
+                }
+                Some(n) => {
+                    match u16::from_str_radix(n, 16) {
+                        Ok(n) => DebugCommand::Print(n),
+                        Err(e) => {
+                            println!("Misformatted address: {}", e);
+                            read_debugger_command()
+                        }
+                    }
                 }
             }
         }
@@ -304,6 +322,9 @@ pub fn run_debugger(mut cpu: Cpu) {
                 Delete(None) => {
                     breakpoints.clear();
                     println!("All breakpoints deleted.");
+                }
+                Print(addr) => { 
+                    println!("[{:04x}] = {:02x}).", addr, cpu.mem_read(addr));
                 }
                 RepeatLastCommand => { unreachable!(); },
             }

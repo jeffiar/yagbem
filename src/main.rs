@@ -154,6 +154,6 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
         last_frame_time = SystemTime::now();
     });
 
-    eprintln!("Program terminated after {} cycles", cpu.n_cycles);
+    println!("Program terminated after {} cycles ({} instructions)", cpu.n_cycles, cpu.n_instrs);
     std::process::exit(0);
 }
