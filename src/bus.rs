@@ -52,24 +52,19 @@ use bitflags::bitflags;
 
 bitflags! {
     pub struct Interrupt: u8 {
-        const VBLANK = 1 << 4; // Vertical Blanking
-        const STAT   = 1 << 3; // LCDC (STAT referenced)
+        const VBLANK = 1 << 0; // Vertical Blanking
+        const STAT   = 1 << 1; // LCDC (STAT referenced)
         const TIMER  = 1 << 2; // Timer Overflow
-        const SERIAL = 1 << 1; // Serial I/O Transfer Completion
-        const INPUT  = 1 << 0; // P10-P13 Terminal Negative Edge
+        const SERIAL = 1 << 3; // Serial I/O Transfer Completion
+        const INPUT  = 1 << 4; // P10-P13 Terminal Negative Edge
     }
 }
 
 impl Interrupt {
     pub fn handler_addr(i: Interrupt) -> u16 {
-        match i.bits() {
-            0b00001..=0b00001 => 0x60,
-            0b00010..=0b00011 => 0x58,
-            0b00100..=0b00111 => 0x50,
-            0b01000..=0b01111 => 0x48,
-            0b10000..=0b10000 => 0x48,
-            _ => unreachable!()
-        }
+        let n = i.bits().trailing_zeros() as usize;
+        let v = [0x40, 0x48, 0x50, 0x58, 0x60];
+        v[n]
     }
 }
 
