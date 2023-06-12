@@ -177,7 +177,7 @@ pub struct Bus {
     dirty_addrs: Vec<u16>,
 
     timer: Timer,
-    pub ppu: Ppu,
+    ppu: Ppu,
 }
 
 impl Mem for Bus {
@@ -224,6 +224,9 @@ impl Mem for Bus {
                     eprint!("{}", self.mem_read(register::SB) as char);
                     stderr().flush().expect("Failed to write to stderr");
                 }
+            }
+            0x8000..=0x9fff => {
+                self.ppu.mark_tilemap_dirty();
             }
             _ => {}
         }
