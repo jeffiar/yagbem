@@ -4,8 +4,6 @@ const CYCLES_PER_LINE: u64 = 114 * 4;
 const LINES_PER_FRAME: u64 = 154;
 const VBLANK_LINE_NUM: u64 = 144;
 
-const SCREEN_FULL_X: usize = 256;
-const SCREEN_FULL_Y: usize = 256;
 const SCREEN_DISP_X: usize = 160;
 const SCREEN_DISP_Y: usize = 144;
 // const SCREEN_NUM_DOTS: usize = SCREEN_DISP_X * 3 * SCREEN_DISP_Y;
@@ -21,7 +19,6 @@ pub struct Ppu {
     stat_intr_line: bool,
     mode: Mode,
 
-    background: Frame,
     screen: Frame,
 }
 
@@ -48,12 +45,6 @@ impl Frame {
         }
     }
 
-    fn get_pixel(&self, x: usize, y: usize) -> (u8, u8, u8) {
-        let idx = ((y * self.width) + x) * 3;
-        (self.data[idx], self.data[idx + 1], self.data[idx + 2])
-    }
-
-
     fn set_pixel(&mut self, x: usize, y: usize, color: (u8,u8,u8)) {
         if x > self.width || y > self.height {
             panic!("Out of bounds access: ({x},{y}) in ({},{})", self.width, self.height);
@@ -65,20 +56,20 @@ impl Frame {
         self.data[idx + 2] = b;
     }
 
-    fn draw_tile(&mut self, x: usize , y: usize, tile_data: &[u8]) {
-        for row in 0..8 {
-            let mut layer_0 = tile_data[2*row];
-            let mut layer_1 = tile_data[2*row+1];
+    // fn draw_tile(&mut self, x: usize , y: usize, tile_data: &[u8]) {
+    //     for row in 0..8 {
+    //         let mut layer_0 = tile_data[2*row];
+    //         let mut layer_1 = tile_data[2*row+1];
 
-            for col in (0..8).rev() {
-                let color_num = (layer_0 & 1) << 1 | (layer_1 & 1);
-                layer_0 >>= 1;
-                layer_1 >>= 1;
+    //         for col in (0..8).rev() {
+    //             let color_num = (layer_0 & 1) << 1 | (layer_1 & 1);
+    //             layer_0 >>= 1;
+    //             layer_1 >>= 1;
 
-                self.set_pixel(x + col as usize, y + row as usize, PALETTE[color_num as usize]);
-            }
-        }
-    }
+    //             self.set_pixel(x + col as usize, y + row as usize, PALETTE[color_num as usize]);
+    //         }
+    //     }
+    // }
 }
 
 impl Ppu {
@@ -93,7 +84,6 @@ impl Ppu {
             should_trigger_vblank: false,
             should_trigger_stat: false,
 
-            background: Frame::new(SCREEN_FULL_X, SCREEN_FULL_Y),
             screen: Frame::new(SCREEN_DISP_X, SCREEN_DISP_Y),
         }
     }
@@ -114,11 +104,11 @@ impl Ppu {
     pub fn tick(&mut self, nticks: u64, mem: &mut [u8]) {
         // update dot, line, and frame numbers
         self.dot_num += nticks;
-        if self.dot_num > CYCLES_PER_LINE {
+        if self.dot_num >= CYCLES_PER_LINE {
             self.dot_num -= CYCLES_PER_LINE;
             self.line_num += 1;
         }
-        if self.line_num > LINES_PER_FRAME {
+        if self.line_num >= LINES_PER_FRAME {
             self.line_num -= LINES_PER_FRAME;
             self.frame_num += 1;
         }
@@ -168,41 +158,36 @@ impl Ppu {
         }
     }
 
-    fn update_background(&mut self, mem: &[u8]) {
-        let mut addr = 0x9800;
-        for y_tile in 0..32 {
-            for x_tile in 0..32 {
-                let chr = mem[addr];
-                let tile_addr = 0x8000 + (chr as u16 * 16) as usize;
+    fn calc_bg_color(&self, x: u8, y: u8, mem: &[u8]) -> (u8,u8,u8) {
+        let dx = (x % 8) as usize;
+        let dy = (y % 8) as usize;
+        let tile_num = ((y as usize / 8) * 32) + (x as usize / 8);
+        let tile_id = mem[0x9800 + tile_num] as usize;
+        let tile_data_addr = 0x8000 + (tile_id * 16);
 
-                self.background.draw_tile(x_tile * 8, y_tile * 8, &mem[tile_addr..tile_addr + 16]);
-                addr += 1;
-            }
-        }
+        let bitplane_0 = mem[tile_data_addr + 2*dy];
+        let bitplane_1 = mem[tile_data_addr + 2*dy + 1];
+
+        let color_num = (bitplane_0 >> (7 - dx)) & 1 | ((bitplane_1 >> (7 - dx)) & 1) << 1;
+        PALETTE[color_num as usize]
     }
 
-    fn update_screen(&mut self, mem: &[u8]) {
-        let scx = mem[register::SCX as usize];
-        let scy = mem[register::SCY as usize];
-
-        for y in 0..SCREEN_DISP_Y {
-            for x in 0..SCREEN_DISP_X {
-                let tm_x = scx.wrapping_add(x as u8) as usize;
-                let tm_y = scy.wrapping_add(y as u8) as usize;
-                let rgb = self.background.get_pixel(tm_x, tm_y);
-                self.screen.set_pixel(x, y, rgb);
-            }
-        }
-    }
-
-    pub fn render_frame(&mut self, mem: &[u8]) -> &[u8] {
-        self.update_background(mem);
-        self.update_screen(mem);
+    pub fn screen(&mut self) -> &[u8] {
         &self.screen.data
     }
 
     fn draw_line(&mut self, mem: &[u8]) {
-        todo!();
+        let y = self.line_num as usize;
+        let scx = mem[register::SCX as usize];
+        let scy = mem[register::SCY as usize];
+
+        for x in 0..SCREEN_DISP_X {
+            let bg_x = scx.wrapping_add(x as u8);
+            let bg_y = scy.wrapping_add(y as u8);
+            let bg_color = self.calc_bg_color(bg_x, bg_y, mem);
+
+            self.screen.set_pixel(x, y, bg_color);
+        }
     }
 
 }

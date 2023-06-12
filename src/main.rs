@@ -138,7 +138,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
         let sim_time = SystemTime::now();
 
         handle_user_input(&mut event_pump);
-        texture.update(None, &cpu.bus.render_frame(), (SCREEN_DISP_X * 3) as usize).unwrap();
+        texture.update(None, &cpu.bus.screen(), (SCREEN_DISP_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();
 

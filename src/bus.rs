@@ -236,9 +236,6 @@ impl Mem for Bus {
             register::DMA => {
                 self.initiate_dma((val as u16) << 8);
             }
-            0x8000..=0x9fff => {
-                self.ppu.mark_vram_dirty();
-            }
             _ => {}
         }
         self.mem[addr as usize] = val; 
@@ -320,8 +317,8 @@ impl Bus {
         self.n_cycles = n_cycles;
     }
 
-    pub fn render_frame(&mut self) -> &[u8] {
-        self.ppu.render_frame(&self.mem)
+    pub fn screen(&mut self) -> &[u8] {
+        self.ppu.screen()
     }
 
     fn initiate_dma(&mut self, addr: u16) {
