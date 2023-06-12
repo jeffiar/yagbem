@@ -226,7 +226,7 @@ impl Mem for Bus {
                 }
             }
             0x8000..=0x9fff => {
-                self.ppu.mark_tilemap_dirty();
+                self.ppu.mark_vram_dirty();
             }
             _ => {}
         }

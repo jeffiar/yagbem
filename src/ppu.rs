@@ -19,10 +19,10 @@ pub struct Ppu {
     should_trigger_vblank: bool,
     should_trigger_stat: bool,
 
-    tilemap: Frame,
+    background: Frame,
     screen: Frame,
 
-    tilemap_dirty: bool,
+    background_dirty: bool,
     screen_dirty: bool,
 }
 
@@ -80,10 +80,10 @@ impl Ppu {
             should_trigger_vblank: false,
             should_trigger_stat: false,
 
-            tilemap: Frame::new(SCREEN_FULL_X, SCREEN_FULL_Y),
+            background: Frame::new(SCREEN_FULL_X, SCREEN_FULL_Y),
             screen: Frame::new(SCREEN_DISP_X, SCREEN_DISP_Y),
 
-            tilemap_dirty: true,
+            background_dirty: true,
             screen_dirty: true,
         }
     }
@@ -128,18 +128,18 @@ impl Ppu {
         }
     }
 
-    fn update_tilemap(&mut self, mem: &[u8]) {
+    fn update_background(&mut self, mem: &[u8]) {
         let mut addr = 0x9800;
         for y_tile in 0..32 {
             for x_tile in 0..32 {
                 let chr = mem[addr];
                 let tile_addr = 0x8000 + (chr as u16 * 16) as usize;
 
-                self.tilemap.draw_tile(x_tile * 8, y_tile * 8, &mem[tile_addr..tile_addr + 16]);
+                self.background.draw_tile(x_tile * 8, y_tile * 8, &mem[tile_addr..tile_addr + 16]);
                 addr += 1;
             }
         }
-        self.tilemap_dirty = false;
+        self.background_dirty = false;
     }
 
     fn update_screen(&mut self, mem: &[u8]) {
@@ -150,15 +150,15 @@ impl Ppu {
             for x in 0..SCREEN_DISP_X {
                 let tm_x = scx.wrapping_add(x as u8) as usize;
                 let tm_y = scy.wrapping_add(y as u8) as usize;
-                let rgb = self.tilemap.get_pixel(tm_x, tm_y);
+                let rgb = self.background.get_pixel(tm_x, tm_y);
                 self.screen.set_pixel(x, y, rgb);
             }
         }
     }
 
     pub fn render_frame(&mut self, mem: &[u8]) -> &[u8] {
-        if self.tilemap_dirty {
-            self.update_tilemap(mem);
+        if self.background_dirty {
+            self.update_background(mem);
         }
 
         if self.screen_dirty {
@@ -168,7 +168,9 @@ impl Ppu {
         &self.screen.data
     }
 
-    pub fn mark_tilemap_dirty(&mut self) { self.tilemap_dirty = true; }
+    pub fn mark_vram_dirty(&mut self) {
+        self.background_dirty = true;
+    }
 
 }
 
