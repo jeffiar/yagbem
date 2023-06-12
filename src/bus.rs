@@ -1,8 +1,5 @@
 use std::io::{stderr, Write};
-
-const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
-const VBLANK_CYCLE_N: u64 = 65664;
-const CYCLES_PER_LINE: u64 = 114 * 4;
+use crate::ppu::Ppu;
 
 #[allow(dead_code)]
 pub mod register {
@@ -178,9 +175,9 @@ pub struct Bus {
 
     n_cycles: u64,
     dirty_addrs: Vec<u16>,
-    frame_start_n_cyc: u64,
 
     timer: Timer,
+    pub ppu: Ppu,
 }
 
 impl Mem for Bus {
@@ -193,9 +190,6 @@ impl Mem for Bus {
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
             register::SC => 0x00,
-            register::LY => {
-                ((self.n_cycles - self.frame_start_n_cyc) / CYCLES_PER_LINE ) as u8
-            }
             _ => self.mem[addr as usize] ,
         }
     }
@@ -258,8 +252,8 @@ impl Bus {
             IE: Interrupt::empty(),
             IF: Interrupt::empty(),
             n_cycles: 0,
-            frame_start_n_cyc: 0,
             timer: Timer::new(),
+            ppu: Ppu::new(),
         }
     }
 
@@ -279,19 +273,24 @@ impl Bus {
     pub fn sync(&mut self, n_cycles: u64) {
         let nticks = n_cycles - self.n_cycles;
 
-        if n_cycles >= self.frame_start_n_cyc + CYCLES_PER_FRAME {
-            self.frame_start_n_cyc += CYCLES_PER_FRAME;
-        }
-
-        if n_cycles >= self.frame_start_n_cyc + VBLANK_CYCLE_N {
-            self.IF.insert(Interrupt::VBLANK);
-        };
-
         if self.timer.tick(nticks, &mut self.mem) {
             self.IF.insert(Interrupt::TIMER);
         }
 
+        self.ppu.tick(nticks, &mut self.mem);
+
+        if self.ppu.should_trigger_vblank() {
+            self.IF.insert(Interrupt::VBLANK);
+        }
+        if self.ppu.should_trigger_stat() {
+            self.IF.insert(Interrupt::LCDC);
+        }
+
         self.n_cycles = n_cycles;
+    }
+
+    pub fn render_frame(&mut self) -> &[u8] {
+        self.ppu.render_frame(&self.mem)
     }
 }
 

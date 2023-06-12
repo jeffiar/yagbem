@@ -1,18 +1,15 @@
 use std::fs;
 // use std::time::SystemTime;
 
-use gbem::{Cpu, Mem, run_debugger, register};
+use gbem::{Cpu, Mem, run_debugger};
 
 use sdl2::event::Event;
 use sdl2::EventPump;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 
-// const CYCLES_PER_SECOND: u64 = 4194304;
+// TODO move this somewhere so it's not duplicated
 const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
-
-// const SCREEN_FULL_X: u32 = 256;
-// const SCREEN_FULL_Y: u32 = 256;
 const SCREEN_DISP_X: u32 = 160;
 const SCREEN_DISP_Y: u32 = 144;
 
@@ -34,54 +31,6 @@ fn handle_user_input(event_pump: &mut EventPump) {
             }
             _ => {/* do nothing */}
         };
-    }
-}
-
-const PALETTE: [(u8,u8,u8); 4] = [ (255, 255, 255), (192, 192, 192), (128, 128, 128), (64, 64, 64), ];
-
-fn draw_pixel(x: u32, y: u32, color: (u8,u8,u8), out: &mut [u8], out_width: u32, out_height: u32) {
-    if x >= out_width || y >= out_height {
-        return;
-    }
-    let out_idx = (((y * out_width) + x) * 3) as usize;
-    let (r,g,b) = color;
-    out[out_idx] = r;
-    out[out_idx + 1] = g;
-    out[out_idx + 2] = b;
-}
-
-fn paint_tile(tile_data: &[u8], out_rgb: &mut [u8], out_width: u32, out_height: u32, x: u32 , y: u32) {
-    assert_eq!(tile_data.len(), 16);
-
-    for row in 0..8 {
-        let mut layer_0 = tile_data[2*row];
-        let mut layer_1 = tile_data[2*row+1];
-
-        for col in (0..8).rev() {
-            let color_num = (layer_0 & 1) << 1 | (layer_1 & 1);
-            layer_0 >>= 1;
-            layer_1 >>= 1;
-
-            draw_pixel(x + col as u32, y + row as u32, PALETTE[color_num as usize], out_rgb, out_width, out_height);
-        }
-    }
-}
-
-fn render(cpu: &Cpu, tile_map_rgb: &mut [u8]) {
-    let mut addr = 0x9800;
-    for y_tile in 0..32 {
-        for x_tile in 0..32 {
-            let chr = cpu.mem_read(addr);
-            let tile_data = 0x8000 + (chr as u16 * 16);
-            paint_tile(&cpu.mem_read_range(tile_data, tile_data + 16), 
-                       tile_map_rgb, 
-                       SCREEN_DISP_X,
-                       SCREEN_DISP_Y,
-                       (x_tile as u8 * 8).wrapping_sub(cpu.mem_read(register::SCX)) as u32,
-                       (y_tile as u8 * 8).wrapping_sub(cpu.mem_read(register::SCY)) as u32,
-                       );
-            addr += 1;
-        }
     }
 }
 
@@ -174,7 +123,6 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
 
     eprintln!("Initialized SDL2");
 
-    let mut frame = [0 as u8; (SCREEN_DISP_X * 3 * SCREEN_DISP_Y) as usize];
 
     let mut next_frame_n_cycle = 0;
     cpu.run_with_callback(move |cpu: &mut Cpu| {
@@ -185,8 +133,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool) {
 
         handle_user_input(&mut event_pump);
 
-        render(&cpu, &mut frame); 
-        texture.update(None, &frame, (SCREEN_DISP_X * 3) as usize).unwrap();
+        texture.update(None, &cpu.bus.render_frame(), (SCREEN_DISP_X * 3) as usize).unwrap();
         canvas.copy(&texture, None, None).unwrap();
         canvas.present();
     });

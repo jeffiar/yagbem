@@ -383,8 +383,10 @@ impl Cpu {
 
             if let Some(interrupt) = self.poll_irq() {
                 self.handle_interrupt(interrupt);
+                // eprintln!("Handling interrupt {:?}", interrupt);
             } else {
                 let instr = self.fetch_and_decode(self.pc);
+                // eprintln!("{:04x}: {}", self.pc, instr);
                 self.execute_instruction(instr);
             }
 
