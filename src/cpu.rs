@@ -355,7 +355,7 @@ impl Cpu {
         
         if iflags.bits() != 0 {
             if iflags.contains(Interrupt::VBLANK) { return Some(Interrupt::VBLANK); }
-            if iflags.contains(Interrupt::LCDC) { return Some(Interrupt::LCDC); }
+            if iflags.contains(Interrupt::STAT) { return Some(Interrupt::STAT); }
             if iflags.contains(Interrupt::TIMER) { return Some(Interrupt::TIMER); }
             if iflags.contains(Interrupt::SERIAL) { return Some(Interrupt::SERIAL); }
             if iflags.contains(Interrupt::INPUT)  { return Some(Interrupt::INPUT); }

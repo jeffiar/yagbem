@@ -18,6 +18,7 @@ pub struct Ppu {
 
     should_trigger_vblank: bool,
     should_trigger_stat: bool,
+    stat_irq_line: bool,
 
     background: Frame,
     screen: Frame,
@@ -30,6 +31,14 @@ pub struct Frame {
     data: Vec<u8>,
     width: usize,
     height: usize,
+}
+
+#[derive(PartialEq, Copy, Clone)]
+enum Stat {
+    Hblank = 0,
+    Vblank = 1,
+    OamScan = 2,
+    Drawing = 3,
 }
 
 impl Frame {
@@ -48,6 +57,9 @@ impl Frame {
 
 
     fn set_pixel(&mut self, x: usize, y: usize, color: (u8,u8,u8)) {
+        if x > self.width || y > self.height {
+            panic!("Out of bounds access: ({x},{y}) in ({},{})", self.width, self.height);
+        }
         let idx = ((y * self.width) + x) * 3;
         let (r,g,b) = color;
         self.data[idx] = r;
@@ -79,6 +91,7 @@ impl Ppu {
             frame_num: 0,
             should_trigger_vblank: false,
             should_trigger_stat: false,
+            stat_irq_line: false,
 
             background: Frame::new(SCREEN_FULL_X, SCREEN_FULL_Y),
             screen: Frame::new(SCREEN_DISP_X, SCREEN_DISP_Y),
@@ -89,6 +102,9 @@ impl Ppu {
     }
 
     pub fn tick(&mut self, nticks: u64, mem: &mut [u8]) {
+        let old_stat_irq_line = self.stat_irq_line;
+        let old_stat = mem[register::STAT as usize];
+
         self.dot_num += nticks;
         if self.dot_num > CYCLES_PER_LINE {
             self.dot_num -= CYCLES_PER_LINE;
@@ -104,7 +120,34 @@ impl Ppu {
             self.frame_num += 1;
         }
 
+        // Detect what "mode" the current LCD screen is, using constant
+        // length drawing per scanline for now...
+        let mode = if self.line_num >= VBLANK_LINE_NUM {
+            Stat::Vblank
+        } else {
+            match self.dot_num {
+                0..=80 => Stat::OamScan,
+                81..=252 => Stat::Drawing,
+                _ => Stat::Hblank,
+            }
+        };
+
+        let line_match = self.line_num == mem[register::LCY as usize] as u64;
+        let stat = (line_match as u8) << 2 | mode as u8;
+        assert_eq!(stat & 0xf8, 0); // only lower 3 bits should be set here
+
+        // Check for LCDC STAT interrupt triggers
+        self.stat_irq_line = (mode == Stat::Hblank && (old_stat & (1 << 3)) != 0) 
+                            || (mode == Stat::Vblank && (old_stat & (1 << 4)) != 0) 
+                            || (mode == Stat::OamScan && (old_stat & (1 << 5)) != 0) 
+                            || (line_match && (old_stat & (1 << 6)) != 0);
+        // Trigger interrupt on rising edge
+        if !old_stat_irq_line && self.stat_irq_line {
+            self.should_trigger_stat = true;
+        }
+
         // write to memory
+        mem[register::STAT as usize] = (stat & 0x7) | (old_stat & 0xf8);
         mem[register::LY as usize] = self.line_num as u8;
     }
 

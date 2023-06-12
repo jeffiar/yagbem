@@ -53,7 +53,7 @@ use bitflags::bitflags;
 bitflags! {
     pub struct Interrupt: u8 {
         const VBLANK = 1 << 4; // Vertical Blanking
-        const LCDC   = 1 << 3; // LCDC (STAT referenced)
+        const STAT   = 1 << 3; // LCDC (STAT referenced)
         const TIMER  = 1 << 2; // Timer Overflow
         const SERIAL = 1 << 1; // Serial I/O Transfer Completion
         const INPUT  = 1 << 0; // P10-P13 Terminal Negative Edge
@@ -214,6 +214,10 @@ impl Mem for Bus {
             register::IE => { self.IE = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::IF => { self.IF = Interrupt::from_bits(val).expect("Bad Interrupt set"); }
             register::LY => { panic!("Register LY (0xff44) is not writeable"); }
+            register::STAT => {
+                // The bottom three bits are not writeable
+                self.mem[register::STAT as usize] |= val & 0xf8;
+            }
             register::DIV => {
                 self.timer.reset_div_counter();
             }
@@ -255,7 +259,7 @@ impl Bus {
     pub fn new() -> Bus {
         let mut bus = Bus::new_flat();
         bus.flat = false;
-        bus.mem_write(register::LCDC, 0x83);
+        bus.mem_write(register::STAT, 0x83);
         bus
     }
 
@@ -302,7 +306,7 @@ impl Bus {
             self.IF.insert(Interrupt::VBLANK);
         }
         if self.ppu.should_trigger_stat() {
-            self.IF.insert(Interrupt::LCDC);
+            self.IF.insert(Interrupt::STAT);
         }
 
         if self.dma_running {
