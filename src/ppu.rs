@@ -1,5 +1,6 @@
 use crate::bus::register;
 use bitflags::bitflags;
+use strum_macros;
 
 const CYCLES_PER_LINE: u64 = 114 * 4;
 const LINES_PER_FRAME: u64 = 154;
@@ -74,12 +75,12 @@ impl Frame {
         }
     }
 
-    fn set_pixel(&mut self, x: usize, y: usize, color: (u8,u8,u8)) {
+    fn set_pixel(&mut self, x: usize, y: usize, color: Color) {
         if x > SCREEN_DISP_X || y > SCREEN_DISP_Y {
             panic!("Out of bounds access: ({x},{y})");
         }
         let idx = ((y * SCREEN_DISP_X) + x) * 3;
-        let (r,g,b) = color;
+        let (r,g,b) = color.to_rgb();
         self.data[idx] = r;
         self.data[idx + 1] = g;
         self.data[idx + 2] = b;
@@ -167,7 +168,7 @@ impl Ppu {
         }
     }
 
-    fn calc_pixel(&self, x: u8, y: u8, mem: &[u8], tile_map_flag: bool, tile_data_flag: bool) -> (u8,u8,u8) {
+    fn calc_color(&self, x: u8, y: u8, mem: &[u8], tile_map_flag: bool, palette: Palette) -> Color {
         let dx = (x % 8) as usize;
         let dy = (y % 8) as usize;
         let tile_num = ((y as usize / 8) * 32) + (x as usize / 8);
@@ -176,7 +177,7 @@ impl Ppu {
         } else {
             mem[0x9800 + tile_num]
         };
-        let tile_data_addr = if tile_data_flag {
+        let tile_data_addr = if self.lcdc.contains(LCDC::TILEDATA) {
             0x8000 + tile_id as usize * 16
         } else {
             if tile_id >= 128 {
@@ -188,39 +189,39 @@ impl Ppu {
 
         let bitplane_0 = mem[tile_data_addr + 2*dy];
         let bitplane_1 = mem[tile_data_addr + 2*dy + 1];
+        palette.get_color((bitplane_0 & (0x80 >> dx)) != 0,
+                          (bitplane_1 & (0x80 >> dx)) != 0)
+    }
 
-        let color_num = (bitplane_0 >> (7 - dx)) & 1 | ((bitplane_1 >> (7 - dx)) & 1) << 1;
-        PALETTE[color_num as usize]
+    fn calc_bgd_wdw_color(&self, x: usize, y: usize, mem: &[u8], palette: Palette) -> Color {
+        if !self.lcdc.contains(LCDC::WDW_BGD_ENABLE) {
+            return Color::White;
+        }
+
+        let wx = mem[register::WX as usize];
+        let wy = mem[register::WY as usize];
+        let wdw_x = x as isize - wx as isize + 7;
+        let wdw_y = y as isize - wy as isize;
+        if self.lcdc.contains(LCDC::WDW_ENABLE) && (wdw_x >= 0) && (wdw_y >= 0)  {
+            return self.calc_color(wdw_x as u8, wdw_y as u8, mem, self.lcdc.contains(LCDC::WDW_TILEMAP), palette);
+        }
+
+        let scx = mem[register::SCX as usize];
+        let scy = mem[register::SCY as usize];
+        let bgd_x = scx.wrapping_add(x as u8);
+        let bgd_y = scy.wrapping_add(y as u8);
+        self.calc_color(bgd_x, bgd_y, mem, self.lcdc.contains(LCDC::BGD_TILEMAP), palette)
     }
 
     fn draw_line(&mut self, mem: &[u8]) {
         let y = self.line_num as usize;
-        let scx = mem[register::SCX as usize];
-        let scy = mem[register::SCY as usize];
-        let wx = mem[register::WX as usize];
-        let wy = mem[register::WY as usize];
+        let bg_palette = Palette::from_u8(mem[register::BGP as usize]);
+        let obj_palette_0 = Palette::from_u8(mem[register::OBP0 as usize]);
+        let obj_palette_1 = Palette::from_u8(mem[register::OBP1 as usize]);
 
         for x in 0..SCREEN_DISP_X {
-            let bgd_x = scx.wrapping_add(x as u8);
-            let bgd_y = scy.wrapping_add(y as u8);
-            let mut bgd_color = self.calc_pixel(bgd_x, bgd_y, mem,
-                                                self.lcdc.contains(LCDC::BGD_TILEMAP),
-                                                self.lcdc.contains(LCDC::TILEDATA));
-
-            let wdw_x = x as isize - wx as isize + 7;
-            let wdw_y = y as isize - wy as isize;
-            if self.lcdc.contains(LCDC::WDW_ENABLE) && (wdw_x >= 0) && (wdw_y >= 0)  {
-                let wdw_color = self.calc_pixel(wdw_x as u8, wdw_y as u8, mem,
-                                                self.lcdc.contains(LCDC::WDW_TILEMAP),
-                                                self.lcdc.contains(LCDC::TILEDATA));
-                bgd_color = wdw_color;
-            }
-
-            if !self.lcdc.contains(LCDC::WDW_BGD_ENABLE) {
-                bgd_color = PALETTE[0];
-            }
-
-            self.screen.set_pixel(x, y, bgd_color);
+            let c = self.calc_bgd_wdw_color(x, y, mem, bg_palette);
+            self.screen.set_pixel(x, y, c);
         }
     }
 
@@ -243,6 +244,48 @@ impl Ppu {
     pub fn get_lcd_control(&self) -> u8 { self.lcdc.bits() }
 
 }
+
+use strum_macros::FromRepr;
+#[derive(FromRepr, Clone, Copy)]
+#[repr(u8)]
+enum Color {
+    White, Light, Dark, Black,
+}
+
+impl Color {
+    const fn to_rgb(&self) -> (u8,u8,u8) {
+        match self {
+            Color::White => (0xff, 0xff, 0xff),
+            Color::Light => (0xaa, 0xaa, 0xaa),
+            Color::Dark  => (0x55, 0x55, 0x55),
+            Color::Black => (0x00, 0x00, 0x00),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Palette {
+    colors: [Color; 4],
+}
+
+impl Palette {
+    fn from_u8(bits: u8) -> Palette {
+        Palette {
+            colors: [
+                Color::from_repr((bits >> 0) & 3).unwrap(),
+                Color::from_repr((bits >> 2) & 3).unwrap(),
+                Color::from_repr((bits >> 4) & 3).unwrap(),
+                Color::from_repr((bits >> 6) & 3).unwrap(),
+            ]
+        }
+    }
+
+    fn get_color(&self, bp0: bool, bp1: bool) -> Color {
+        let idx = bp0 as u8 | (bp1 as u8) << 1;
+        self.colors[idx as usize]
+    }
+}
+
 
 bitflags! {
     struct StatFlags: u8 {
@@ -275,6 +318,3 @@ impl StatReg {
         self.flags.bits() | (self.line_match as u8) << 2 | (self.mode as u8)
     }
 }
-
-const PALETTE: [(u8,u8,u8); 4] = [ (0xff, 0xff, 0xff), (0xaa, 0xaa, 0xaa), (0x55, 0x55, 0x55), (0, 0, 0)];
-

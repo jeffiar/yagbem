@@ -214,7 +214,7 @@ impl Mem for Bus {
             register::IF => { self.IF = Interrupt::from_bits_truncate(val); }
             register::P1 => { self.joypad.write(val); }
             register::LCDC => { self.ppu.set_lcd_control(val); }
-            register::LY => { panic!("Register LY (0xff44) is not writeable"); }
+            // register::LY => { panic!("Register LY (0xff44) is not writeable"); }
             register::STAT => {
                 // The bottom three bits are not writeable
                 self.mem[register::STAT as usize] |= val & 0xf8;
