@@ -16,3 +16,6 @@ yet another gameboy emulator
 * LCD screen is displayed using the SDL2 library
 * Audio is not yet implemented (but I want to soon!)
 * Serial port output gets printed as ASCII to stderr for now
+
+
+![Screenshot of the emulator playing the title screen of The Legend of Zelda, Link's Awakening](img/link.png) ![Screenshot of a text-based debugger for the emulator](img/debugger.png)
