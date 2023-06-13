@@ -319,18 +319,45 @@ impl Ppu {
                 }
             };
 
-            let bitplane_0 = mem[tiledata_addr + 2*dy as usize ];
-            let bitplane_1 = mem[tiledata_addr + 2*dy as usize + 1];
-
-            let bp0 = (bitplane_0 & (0x80 >> dx)) != 0;
-            let bp1 = (bitplane_1 & (0x80 >> dx)) != 0;
-
-            line[disp_x] = bp0 as u8 | (bp1 as u8) << 1;
+            line[disp_x] = Self::get_color_num_from_tile(tiledata_addr, dx, dy, mem);
         }
     }
 
-    fn draw_window(&self, _line: &mut [u8], _mem: &[u8]) {
-        todo!()
+    fn draw_window(&self, line: &mut [u8], mem: &[u8]) {
+        let wx = mem[register::WX as usize] as isize - 7;
+        let wy = mem[register::WY as usize] as usize;
+        if self.line_num < wy {
+            return;
+        }
+
+        let y = self.line_num - wy;
+        let tile_y = y / 8;
+        let dy = y % 8;
+        let tilemap_addr = if self.lcdc.contains(LCDC::WDW_TILEMAP) { 0x9c00 } else { 0x9800 };
+
+        for disp_x in wx..SCREEN_DISP_X as isize {
+            let x = disp_x - wx;
+            if x < 0 {
+                continue;
+            }
+            let tile_x = x / 8;
+            let dx = x % 8;
+
+            // TODO find a way to DRY this logic; it's repeated for background and window
+            let tile_num = tile_y as usize * 32 + tile_x as usize;
+            let tile_id = mem[tilemap_addr + tile_num];
+            let tiledata_addr = if self.lcdc.contains(LCDC::TILEDATA) {
+                0x8000 + tile_id as usize * 16
+            } else {
+                if tile_id >= 128 {
+                    (0x9000 + (tile_id as isize - 256) * 16) as usize
+                } else {
+                    0x9000 + tile_id as usize * 16
+                }
+            };
+
+            line[disp_x as usize] = Self::get_color_num_from_tile(tiledata_addr, dx as u8, dy as u8, mem);
+        }
     }
 
     fn oam_search(&self, mem: &[u8]) -> Vec<Sprite> {
@@ -349,30 +376,29 @@ impl Ppu {
     }
 
     fn draw_obj(&self, obj: Sprite, line: &mut [u8], palettes: &mut [PaletteType], mem: &[u8]) {
-        let mut dy = (self.line_num as isize - obj.y as isize) as usize;
-        if obj.flipped_y { dy = 7 - dy; }
-
+        let dy = (self.line_num as isize - obj.y as isize) as usize;
         for dx in 0..8 {
             let x = obj.x + dx;
             if (x < 0) || (x > line.len() as isize) {
                 continue;
             }
-
-            let tiledata_addr = 0x8000 + obj.tile_id * 16;
-            let bitplane_0 = mem[tiledata_addr + 2*dy as usize];
-            let bitplane_1 = mem[tiledata_addr + 2*dy as usize + 1];
-
-            let s = if obj.flipped_x { 7 - dx } else { dx };
-
-            let bp0 = (bitplane_0 & (0x80 >> s)) != 0;
-            let bp1 = (bitplane_1 & (0x80 >> s)) != 0;
-            let cnum = bp0 as u8 | (bp1 as u8) << 1;
-
+            let cnum = Self::get_color_num_from_tile(0x8000 + obj.tile_id * 16,
+                                                     (if obj.flipped_x { 7 - dx } else { dx }) as u8,
+                                                     (if obj.flipped_y { 7 - dy } else { dy }) as u8,
+                                                     mem);
             if (obj.priority && line[x as usize] == 0) || (!obj.priority && cnum != 0) {
                 line[x as usize] = cnum;
                 palettes[x as usize] = obj.palette;
             }
         }
+    }
+
+    fn get_color_num_from_tile(tiledata_addr: usize, dx: u8, dy: u8, mem: &[u8]) -> u8 {
+        let bitplane_0 = mem[tiledata_addr + 2*dy as usize];
+        let bitplane_1 = mem[tiledata_addr + 2*dy as usize + 1];
+        let bp0 = (bitplane_0 & (0x80 >> dx)) != 0;
+        let bp1 = (bitplane_1 & (0x80 >> dx)) != 0;
+        bp0 as u8 | (bp1 as u8) << 1
     }
 
     fn apply_palette(&self, color_data: &[u8], palette_types: &[PaletteType], mem: &[u8]) -> Vec<Color> {
