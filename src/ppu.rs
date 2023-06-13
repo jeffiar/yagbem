@@ -218,27 +218,31 @@ impl Ppu {
         let mut color_data = [0u8; SCREEN_DISP_X];
         let mut palettes = [PaletteType::Background; SCREEN_DISP_X];
 
-        self.draw_background_and_window(&mut color_data, mem);
+        if self.lcdc.contains(LCDC::WDW_BGD_ENABLE) {
+            self.draw_background(&mut color_data, mem);
+            if self.lcdc.contains(LCDC::WDW_ENABLE) {
+                self.draw_window(&mut color_data, mem);
+            }
+        }
 
-        let visible_objs = self.oam_search(mem);
-        for obj in visible_objs {
-            // mix in sprite color with background/window color with appropriate priority
-            self.draw_obj(obj, &mut color_data, &mut palettes);
+        if self.lcdc.contains(LCDC::OBJ_ENABLE) {
+            for obj in self.oam_search(mem) {
+                self.draw_obj(obj, &mut color_data, &mut palettes, &mem);
+            }
         }
 
         let line: Vec<Color> = self.apply_palette(&color_data, &palettes, mem);
-
         self.screen.draw_line(self.line_num, line);
     }
 
-    fn draw_background_and_window(&self, line: &mut [u8], mem: &[u8]) {
+    fn draw_background(&self, line: &mut [u8], mem: &[u8]) {
         let scx = mem[register::SCX as usize];
         let scy = mem[register::SCY as usize];
         let y = scy.wrapping_add(self.line_num as u8);
         let tile_y = y / 8;
         let dy = y % 8;
 
-        let tilemap_addr = if self.lcdc.contains(LCDC::WDW_TILEMAP) { 0x9c00 } else { 0x9800 };
+        let tilemap_addr = if self.lcdc.contains(LCDC::BGD_TILEMAP) { 0x9c00 } else { 0x9800 };
 
         for disp_x in 0..SCREEN_DISP_X {
             let x = scx.wrapping_add(disp_x as u8);
@@ -268,12 +272,50 @@ impl Ppu {
         }
     }
 
-    fn oam_search(&self, mem: &[u8]) -> Vec<Sprite> {
-        vec![]
+    fn draw_window(&self, line: &mut [u8], mem: &[u8]) {
+        todo!()
     }
 
-    fn draw_obj(&self, obj: Sprite, line: &mut [u8], palettes: &[PaletteType]) {
+    fn oam_search(&self, mem: &[u8]) -> Vec<Sprite> {
+        let mut sprites = Vec::new();
+        let mut sprite_addr = 0xfe00;
+        for _ in 0..40 {
+            let obj_y = mem[sprite_addr] as isize - 16;
+            let y = self.line_num as isize;
+            if (obj_y <= y) && (y < obj_y + 8) { // TODO big sprites
+                sprites.push(Sprite::new(&mem[sprite_addr..sprite_addr+4]));
+            }
+            sprite_addr += 4;
+        }
+        // TODO sort so that priority is obeyed
+        sprites
+    }
 
+    fn draw_obj(&self, obj: Sprite, line: &mut [u8], palettes: &mut [PaletteType], mem: &[u8]) {
+        let mut dy = (self.line_num as isize - obj.y as isize) as usize;
+        if obj.flipped_y { dy = 7 - dy; }
+
+        for dx in 0..8 {
+            let x = obj.x + dx;
+            if (x < 0) || (x > line.len() as isize) {
+                continue;
+            }
+
+            let tiledata_addr = 0x8000 + obj.tile_id * 16;
+            let bitplane_0 = mem[tiledata_addr + 2*dy as usize];
+            let bitplane_1 = mem[tiledata_addr + 2*dy as usize + 1];
+
+            let s = if obj.flipped_x { 7 - dx } else { dx };
+
+            let bp0 = (bitplane_0 & (0x80 >> s)) != 0;
+            let bp1 = (bitplane_1 & (0x80 >> s)) != 0;
+            let cnum = bp0 as u8 | (bp1 as u8) << 1;
+
+            if (obj.priority && line[x as usize] == 0) || (cnum != 0) {
+                line[x as usize] = cnum;
+                palettes[x as usize] = obj.palette;
+            }
+        }
     }
 
     fn apply_palette(&self, color_data: &[u8], palette_types: &[PaletteType], mem: &[u8]) -> Vec<Color> {
@@ -314,7 +356,33 @@ impl Ppu {
 
 }
 
-struct Sprite { }
+struct Sprite {
+    y: isize,
+    x: isize,
+    tile_id: usize,
+    priority: bool,
+    flipped_x: bool,
+    flipped_y: bool,
+    palette: PaletteType,
+}
+
+impl Sprite {
+    fn new(obj_data: &[u8]) -> Sprite {
+        Sprite {
+            y: obj_data[0] as isize - 16,
+            x: obj_data[1] as isize - 8,
+            tile_id: obj_data[2] as usize,
+            priority: (obj_data[3] & (1 << 7)) != 0,
+            flipped_y: (obj_data[3] & (1 << 6)) != 0,
+            flipped_x: (obj_data[3] & (1 << 5)) != 0,
+            palette: if (obj_data[3] & (1 << 4)) != 0 {
+                PaletteType::Object1
+            } else {
+                PaletteType::Object0
+            }
+        }
+    }
+}
 
 #[derive(Copy, Clone)]
 enum PaletteType {
