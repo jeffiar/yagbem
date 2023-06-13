@@ -107,8 +107,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
     eprintln!("Read ROM successfully; {} bytes", program.len());
 
     let mut cpu = Cpu::new();
-    cpu.load_rom(&program);
-    cpu.reset();
+    cpu.bus.load_rom(&program);
 
     if boot_rom {
         cpu.pc = 0;

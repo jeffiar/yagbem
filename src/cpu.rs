@@ -98,32 +98,9 @@ impl Cpu {
         cpu
     }
 
-    pub fn reset(&mut self) {
-        // TODO read the manual for what this is supposed to do!
-        self.a = 0;
-        self.b = 0;
-        self.c = 0;
-        self.d = 0;
-        self.e = 0;
-        self.h = 0;
-        self.l = 0;
-        self.flags = Flags::empty();
-        self.pc = PC_START;
-        self.sp = SP_START;
-        self.status = Status::Running;
-
-        self.interrupt_master_enable = false;
-        self.n_instrs = 0;
-        self.n_cycles = 0;
-    }
-
-    pub fn load_rom(&mut self, program: &[u8]) {
-        self.bus.load(program, 0x0000);
-    }
-
     pub fn run_instructions_and_stop(&mut self, program: &[u8]) {
         // self.reset();
-        self.bus.load(program, self.pc);
+        self.bus.load_flat(program, self.pc);
         self.bus.mem_write(self.pc + program.len() as u16, 0x10); // add STOP
         self.run();
     }
@@ -743,19 +720,6 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reset() {
-        let mut cpu = Cpu::new_flat();
-        cpu.reg8_write(OpReg8::E, 0x40);
-        cpu.mem_write(0x0d40, 0x50);
-        assert_eq!(cpu.reg8_read(OpReg8::E), 0x40);
-        // assert_eq!(cpu.mem_read(0xd40), 0x50);
-        cpu.reset();
-        assert_eq!(cpu.reg8_read(OpReg8::E), 0);
-        // assert_eq!(cpu.mem_read(0xd40), 0);
-    }
-
 
     #[test]
     fn load8() {

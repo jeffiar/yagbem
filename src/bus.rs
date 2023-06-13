@@ -1,6 +1,7 @@
 use std::io::{stderr, Write};
 use crate::ppu::Ppu;
 use crate::joypad::Joypad;
+use crate::rom::Rom;
 
 #[allow(dead_code)]
 pub mod register {
@@ -180,6 +181,7 @@ pub struct Bus {
     timer: Timer,
     ppu: Ppu,
     pub joypad: Joypad,
+    rom: Rom,
 }
 
 impl Mem for Bus {
@@ -193,12 +195,13 @@ impl Mem for Bus {
         }
 
         match addr {
+            0x0000..=0x7fff => self.rom.read(addr),
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
             register::P1 => self.joypad.read(),
             register::LCDC => self.ppu.get_lcd_control(),
             register::SC => 0x00,
-            _ => self.mem[addr as usize] ,
+            _ => self.mem[addr as usize],
         }
     }
 
@@ -210,6 +213,7 @@ impl Mem for Bus {
         }
 
         match addr {
+            0x0000..=0x7fff => { self.rom.write(addr, val); }
             register::IE => { self.IE = Interrupt::from_bits_truncate(val); }
             register::IF => { self.IF = Interrupt::from_bits_truncate(val); }
             register::P1 => { self.joypad.write(val); }
@@ -233,17 +237,14 @@ impl Mem for Bus {
             }
             register::SC => { 
                 // Print the serial transfer byte as ASCII character to stderr
-                if (val & 0xf0) != 0 {
-                    eprint!("{}", self.mem_read(register::SB) as char);
-                    stderr().flush().unwrap();
-                }
+                // if (val & 0xf0) != 0 {
+                //     eprint!("{}", self.mem_read(register::SB) as char);
+                //     stderr().flush().unwrap();
+                // }
             }
             register::DMA => {
                 self.initiate_dma((val as u16) << 8);
                 self.mem[addr as usize] = val; 
-            }
-            0x0000..=0x7fff => {
-                // ignore the write to ROM area for now
             }
             _ => {
                 self.mem[addr as usize] = val; 
@@ -279,10 +280,15 @@ impl Bus {
             timer: Timer::new(),
             ppu: Ppu::new(),
             joypad: Joypad::new(),
+            rom: Rom::new(),
         }
     }
 
-    pub fn load(&mut self, program: &[u8], start: u16) {
+    pub fn load_rom(&mut self, program: &[u8]) {
+        self.rom.load(program);
+    }
+
+    pub fn load_flat(&mut self, program: &[u8], start: u16) {
         let start = start as usize;
         self.mem[start..(start + program.len())].copy_from_slice(program);
     }
