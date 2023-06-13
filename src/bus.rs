@@ -1,4 +1,4 @@
-use std::io::{stderr, Write};
+// use std::io::{stderr, Write};
 use crate::ppu::Ppu;
 use crate::joypad::Joypad;
 use crate::rom::Rom;
@@ -196,6 +196,7 @@ impl Mem for Bus {
 
         match addr {
             0x0000..=0x7fff => self.rom.read(addr),
+            0xa000..=0xbfff => self.rom.read(addr),
             register::IE => self.IE.bits(),
             register::IF => self.IF.bits(),
             register::P1 => self.joypad.read(),
@@ -214,6 +215,7 @@ impl Mem for Bus {
 
         match addr {
             0x0000..=0x7fff => { self.rom.write(addr, val); }
+            0xa000..=0xbfff => { self.rom.write(addr, val); }
             register::IE => { self.IE = Interrupt::from_bits_truncate(val); }
             register::IF => { self.IF = Interrupt::from_bits_truncate(val); }
             register::P1 => { self.joypad.write(val); }
@@ -284,8 +286,8 @@ impl Bus {
         }
     }
 
-    pub fn load_rom(&mut self, program: &[u8]) {
-        self.rom.load(program);
+    pub fn load_rom(&mut self, program: &[u8], no_header: bool) {
+        self.rom.load(program, no_header);
     }
 
     pub fn load_flat(&mut self, program: &[u8], start: u16) {

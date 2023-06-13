@@ -78,6 +78,9 @@ enum Commands {
         /// Print frame timing info to stderr
         #[arg(long, short)]
         time: bool,
+        /// Whether to parse the ROM header for MBC type
+        #[arg(long, short)]
+        no_header: bool,
     },
 
     /// Run the jsmoo tests
@@ -92,22 +95,24 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Run { rom_file, debug, boot_rom, time }) => {
-            run_rom_file(&rom_file, debug, boot_rom, time);
+        Some(Commands::Run { rom_file, debug, boot_rom, time, no_header }) => {
+            run_rom_file(&rom_file, debug, boot_rom, time, no_header);
         }
         Some(Commands::TestMoo {opcode, debug } ) => {
             gbem::test_moo(&opcode, debug);
         }
-        None => eprintln!("No command specified.")
+        None => {
+            eprintln!("No command specified.");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
+fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool, no_header: bool) {
     let program = fs::read(rom_file).expect("Could not find rom file");
-    eprintln!("Read ROM successfully; {} bytes", program.len());
 
     let mut cpu = Cpu::new();
-    cpu.bus.load_rom(&program);
+    cpu.bus.load_rom(&program, no_header);
 
     if boot_rom {
         cpu.pc = 0;
@@ -143,7 +148,7 @@ fn run_rom_file(rom_file: &str, debug: bool, boot_rom: bool, time: bool) {
    let mut texture = creator
        .create_texture_target(PixelFormatEnum::RGB24, SCREEN_DISP_X, SCREEN_DISP_Y).unwrap();
 
-    eprintln!("Initialized SDL2");
+    // eprintln!("Initialized SDL2");
 
 
     let mut last_frame_time = SystemTime::now();
