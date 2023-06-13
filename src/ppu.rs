@@ -364,10 +364,15 @@ impl Ppu {
         let mut sprites = Vec::new();
         let mut sprite_addr = 0xfe00;
         for _ in 0..40 {
-            let obj_y = mem[sprite_addr] as isize - 16;
+            let obj_y_min = mem[sprite_addr] as isize - 16;
+            let obj_y_max = obj_y_min + self.obj_height() as isize;
             let y = self.line_num as isize;
-            if (obj_y <= y) && (y < obj_y + 8) { // TODO big sprites
-                sprites.push(Sprite::new(&mem[sprite_addr..sprite_addr+4]));
+            if (obj_y_min <= y) && (y < obj_y_max) {
+                let mut sprite = Sprite::new(&mem[sprite_addr..sprite_addr+4]);
+                if self.lcdc.contains(LCDC::OBJ_SIZE) {
+                    sprite.tile_id &= 0xfe;
+                }
+                sprites.push(sprite);
             }
             sprite_addr += 4;
         }
@@ -375,16 +380,20 @@ impl Ppu {
         sprites
     }
 
+    fn obj_height(&self) -> u8 {
+        if self.lcdc.contains(LCDC::OBJ_SIZE) { 16 } else { 8 }
+    }
+
     fn draw_obj(&self, obj: Sprite, line: &mut [u8], palettes: &mut [PaletteType], mem: &[u8]) {
-        let dy = (self.line_num as isize - obj.y as isize) as usize;
-        for dx in 0..8 {
-            let x = obj.x + dx;
-            if (x < 0) || (x > line.len() as isize) {
+        let dy = (self.line_num as isize - obj.y) as u8; // should be between 0 and 7 (or 0 and 15 for tall sprites)
+        for dx in 0u8..8u8 {
+            let x = obj.x + dx as isize;
+            if (x < 0) || (x >= line.len() as isize) {
                 continue;
             }
             let cnum = Self::get_color_num_from_tile(0x8000 + obj.tile_id * 16,
-                                                     (if obj.flipped_x { 7 - dx } else { dx }) as u8,
-                                                     (if obj.flipped_y { 7 - dy } else { dy }) as u8,
+                                                     if obj.flipped_x { 7 - dx } else { dx },
+                                                     if obj.flipped_y { self.obj_height() - dy - 1 } else { dy },
                                                      mem);
             if (obj.priority && line[x as usize] == 0) || (!obj.priority && cnum != 0) {
                 line[x as usize] = cnum;
