@@ -337,7 +337,7 @@ impl Ppu {
 
         for disp_x in wx..SCREEN_DISP_X as isize {
             let x = disp_x - wx;
-            if x < 0 {
+            if x < 0 || disp_x < 0 {
                 continue;
             }
             let tile_x = x / 8;

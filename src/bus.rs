@@ -24,8 +24,8 @@ pub mod register {
     pub const BGP  : u16 = 0xFF47; // Background palette data
     pub const OBP0 : u16 = 0xFF48; // Object palette data 0
     pub const OBP1 : u16 = 0xFF49; // Object palette data 1
-    pub const WX   : u16 = 0xFF4A; // Window x-coordinate
-    pub const WY   : u16 = 0xFF4B; // Window y-cooridinate
+    pub const WY   : u16 = 0xFF4A; // Window y-coordinate
+    pub const WX   : u16 = 0xFF4B; // Window x-cooridinate
     pub const NR10 : u16 = 0xFF10; // CH1 Freq Sweep
     pub const NR11 : u16 = 0xFF11; // CH1 Sound length / duty cycle
     pub const NR12 : u16 = 0xFF12; // CH1 Volume envelope
