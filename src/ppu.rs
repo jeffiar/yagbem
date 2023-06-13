@@ -216,7 +216,7 @@ impl Ppu {
 
     fn draw_line(&mut self, mem: &[u8]) {
         let mut color_data = [0u8; SCREEN_DISP_X];
-        let mut palettes = [PaletteType::BG; SCREEN_DISP_X];
+        let mut palettes = [PaletteType::Background; SCREEN_DISP_X];
 
         self.draw_background_and_window(&mut color_data, mem);
 
@@ -232,7 +232,40 @@ impl Ppu {
     }
 
     fn draw_background_and_window(&self, line: &mut [u8], mem: &[u8]) {
+        let scx = mem[register::SCX as usize];
+        let scy = mem[register::SCY as usize];
+        let y = scy.wrapping_add(self.line_num as u8);
+        let tile_y = y / 8;
+        let dy = y % 8;
 
+        let tilemap_addr = if self.lcdc.contains(LCDC::WDW_TILEMAP) { 0x9c00 } else { 0x9800 };
+
+        for disp_x in 0..SCREEN_DISP_X {
+            let x = scx.wrapping_add(disp_x as u8);
+            let tile_x = x / 8;
+            let dx = x % 8;
+
+            let tile_num = tile_y as usize * 32 + tile_x as usize;
+
+            let tile_id = mem[tilemap_addr + tile_num];
+            let tiledata_addr = if self.lcdc.contains(LCDC::TILEDATA) {
+                0x8000 + tile_id as usize * 16
+            } else {
+                if tile_id >= 128 {
+                    (0x9000 + (tile_id as isize - 256) * 16) as usize
+                } else {
+                    0x9000 + tile_id as usize * 16
+                }
+            };
+
+            let bitplane_0 = mem[tiledata_addr + 2*dy as usize ];
+            let bitplane_1 = mem[tiledata_addr + 2*dy as usize + 1];
+
+            let bp0 = (bitplane_0 & (0x80 >> dx)) != 0;
+            let bp1 = (bitplane_1 & (0x80 >> dx)) != 0;
+
+            line[disp_x] = bp0 as u8 | (bp1 as u8) << 1;
+        }
     }
 
     fn oam_search(&self, mem: &[u8]) -> Vec<Sprite> {
@@ -243,8 +276,22 @@ impl Ppu {
 
     }
 
-    fn apply_palette(&self, color_data: &[u8], palettes: &[PaletteType], mem: &[u8]) -> Vec<Color> {
-        vec![]
+    fn apply_palette(&self, color_data: &[u8], palette_types: &[PaletteType], mem: &[u8]) -> Vec<Color> {
+        let mut colors = Vec::with_capacity(color_data.len());
+        let pal_background = Palette::from_u8(mem[register::BGP as usize]);
+        let pal_sprite_0 = Palette::from_u8(mem[register::OBP0 as usize]);
+        let pal_sprite_1 = Palette::from_u8(mem[register::OBP1 as usize]);
+
+        for (cnum, palette_type) in color_data.iter().zip(palette_types) {
+            let palette = match palette_type {
+                PaletteType::Background => pal_background,
+                PaletteType::Object0 => pal_sprite_0,
+                PaletteType::Object1 => pal_sprite_1,
+            };
+            let color = palette.apply(*cnum);
+            colors.push(color)
+        }
+        colors
     }
 
     pub fn screen(&mut self) -> &[u8] {
@@ -271,7 +318,7 @@ struct Sprite { }
 
 #[derive(Copy, Clone)]
 enum PaletteType {
-    BG, OBJ1, OBJ2,
+    Background, Object0, Object1,
 }
 
 use strum_macros::FromRepr;
@@ -312,6 +359,10 @@ impl Palette {
     fn get_color(&self, bp0: bool, bp1: bool) -> Color {
         let idx = bp0 as u8 | (bp1 as u8) << 1;
         self.colors[idx as usize]
+    }
+
+    fn apply(&self, color_num: u8) -> Color {
+        self.colors[color_num as usize]
     }
 }
 
