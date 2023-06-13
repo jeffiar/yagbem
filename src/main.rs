@@ -14,7 +14,7 @@ const CYCLES_PER_FRAME: usize = 114 * 154 * 4;
 const SCREEN_DISP_X: u32 = 160;
 const SCREEN_DISP_Y: u32 = 144;
 
-const PIXEL_SCALE: f32 = 3.0;
+const PIXEL_SCALE: f32 = 5.0;
 
 use lazy_static::lazy_static;
 use std::collections::HashMap;

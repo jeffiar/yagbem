@@ -214,7 +214,6 @@ impl Mem for Bus {
             register::IF => { self.IF = Interrupt::from_bits_truncate(val); }
             register::P1 => { self.joypad.write(val); }
             register::LCDC => { self.ppu.set_lcd_control(val); }
-            // register::LY => { panic!("Register LY (0xff44) is not writeable"); }
             register::STAT => {
                 // The bottom three bits are not writeable
                 self.mem[register::STAT as usize] |= val & 0xf8;
@@ -241,11 +240,15 @@ impl Mem for Bus {
             }
             register::DMA => {
                 self.initiate_dma((val as u16) << 8);
+                self.mem[addr as usize] = val; 
             }
-            _ => {}
+            0x0000..=0x7fff => {
+                // ignore the write to ROM area for now
+            }
+            _ => {
+                self.mem[addr as usize] = val; 
+            }
         }
-        self.mem[addr as usize] = val; 
-        self.dirty_addrs.push(addr);
     }
 
     fn mem_read_range(&self, start: u16, end: u16) -> &[u8] {
