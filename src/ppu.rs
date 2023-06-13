@@ -2,19 +2,20 @@ use crate::bus::register;
 use bitflags::bitflags;
 use strum_macros;
 
-const CYCLES_PER_LINE: u64 = 114 * 4;
-const LINES_PER_FRAME: u64 = 154;
-const VBLANK_LINE_NUM: u64 = 144;
+const CYCLES_PER_LINE: usize = 114 * 4;
+const LINES_PER_FRAME: usize = 154;
+const VBLANK_LINE_NUM: usize = 144;
 
+const SCREEN_FULL_Y: usize = 256;
 const SCREEN_DISP_X: usize = 160;
 const SCREEN_DISP_Y: usize = 144;
 const SCREEN_N_PIX: usize = SCREEN_DISP_X * SCREEN_DISP_Y;
 // const SCREEN_NUM_DOTS: usize = SCREEN_DISP_X * 3 * SCREEN_DISP_Y;
 
 pub struct Ppu {
-    dot_num: u64,  /// T-cycle number in the scanline, between 0 and 114 * 4 - 1.
-    line_num: u64, /// scanline number, between 0 and 153. VBlank starts on line 144
-    frame_num: u64, /// frame number. Total cycle count is (frame_num * CYCLES_PER_FRAME) +
+    dot_num: usize,  /// T-cycle number in the scanline, between 0 and 114 * 4 - 1.
+    line_num: usize, /// scanline number, between 0 and 153. VBlank starts on line 144
+    frame_num: usize, /// frame number. Total cycle count is (frame_num * CYCLES_PER_FRAME) +
                     /// (line_num * CYCLES_PER_LINE) + dot_num
 
     lcdc: LCDC,
@@ -53,7 +54,7 @@ enum Mode {
 }
 
 impl Mode {
-    fn determine(dot_num: u64, line_num: u64) -> Mode {
+    fn determine(dot_num: usize, line_num: usize) -> Mode {
         // Don't worry about variable length drawing time for now
         if line_num >= VBLANK_LINE_NUM {
             Mode::Vblank
@@ -75,15 +76,15 @@ impl Frame {
         }
     }
 
-    fn set_pixel(&mut self, x: usize, y: usize, color: Color) {
-        if x > SCREEN_DISP_X || y > SCREEN_DISP_Y {
-            panic!("Out of bounds access: ({x},{y})");
+    fn draw_line(&mut self, y: usize, colors: Vec<Color>) {
+        let mut idx = y * SCREEN_DISP_X * 3;
+        for color in colors {
+            let (r,g,b) = color.to_rgb();
+            self.data[idx] = r;
+            self.data[idx + 1] = g;
+            self.data[idx + 2] = b;
+            idx += 3;
         }
-        let idx = ((y * SCREEN_DISP_X) + x) * 3;
-        let (r,g,b) = color.to_rgb();
-        self.data[idx] = r;
-        self.data[idx + 1] = g;
-        self.data[idx + 2] = b;
     }
 
     fn clear(&mut self) {
@@ -108,7 +109,7 @@ impl Ppu {
         }
     }
 
-    pub fn tick(&mut self, nticks: u64, mem: &mut [u8]) {
+    pub fn tick(&mut self, nticks: usize, mem: &mut [u8]) {
         if !self.lcdc.contains(LCDC::MASTER_ENABLE) {
             mem[register::STAT as usize] = 0;
             mem[register::LY as usize] = 0;
@@ -128,7 +129,7 @@ impl Ppu {
         let old_stat_intr_line = self.stat_intr_line;
         let old_mode = self.mode;
 
-        let new_match = self.line_num == mem[register::LCY as usize] as u64;
+        let new_match = self.line_num == mem[register::LCY as usize] as usize;
         let new_mode = Mode::determine(self.dot_num, self.line_num);
         let new_stat_flags = StatFlags::from_bits_truncate(mem[register::STAT as usize]);
         let new_stat_reg = StatReg::new(new_stat_flags, new_match, new_mode);
@@ -214,15 +215,36 @@ impl Ppu {
     }
 
     fn draw_line(&mut self, mem: &[u8]) {
-        let y = self.line_num as usize;
-        let bg_palette = Palette::from_u8(mem[register::BGP as usize]);
-        let obj_palette_0 = Palette::from_u8(mem[register::OBP0 as usize]);
-        let obj_palette_1 = Palette::from_u8(mem[register::OBP1 as usize]);
+        let mut color_data = [0u8; SCREEN_DISP_X];
+        let mut palettes = [PaletteType::BG; SCREEN_DISP_X];
 
-        for x in 0..SCREEN_DISP_X {
-            let c = self.calc_bgd_wdw_color(x, y, mem, bg_palette);
-            self.screen.set_pixel(x, y, c);
+        self.draw_background_and_window(&mut color_data, mem);
+
+        let visible_objs = self.oam_search(mem);
+        for obj in visible_objs {
+            // mix in sprite color with background/window color with appropriate priority
+            self.draw_obj(obj, &mut color_data, &mut palettes);
         }
+
+        let line: Vec<Color> = self.apply_palette(&color_data, &palettes, mem);
+
+        self.screen.draw_line(self.line_num, line);
+    }
+
+    fn draw_background_and_window(&self, line: &mut [u8], mem: &[u8]) {
+
+    }
+
+    fn oam_search(&self, mem: &[u8]) -> Vec<Sprite> {
+        vec![]
+    }
+
+    fn draw_obj(&self, obj: Sprite, line: &mut [u8], palettes: &[PaletteType]) {
+
+    }
+
+    fn apply_palette(&self, color_data: &[u8], palettes: &[PaletteType], mem: &[u8]) -> Vec<Color> {
+        vec![]
     }
 
     pub fn screen(&mut self) -> &[u8] {
@@ -243,6 +265,13 @@ impl Ppu {
     }
     pub fn get_lcd_control(&self) -> u8 { self.lcdc.bits() }
 
+}
+
+struct Sprite { }
+
+#[derive(Copy, Clone)]
+enum PaletteType {
+    BG, OBJ1, OBJ2,
 }
 
 use strum_macros::FromRepr;

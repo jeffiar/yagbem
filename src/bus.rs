@@ -97,15 +97,15 @@ pub trait Mem {
 }
 
 struct Timer {
-    div_counter: u64,
-    tima_counter: u64,
+    div_counter: usize,
+    tima_counter: usize,
     tma: u8,
     period_log_2: u8,
     running: bool,
 }
 
 impl Timer {
-    const TIMA_MASK: u64 = (0xff << 10);
+    const TIMA_MASK: usize = (0xff << 10);
     fn new() -> Timer {
         Timer {
             div_counter: 0,
@@ -117,7 +117,7 @@ impl Timer {
     }
 
     /// Returns whether a timer overflow has ocurred
-    fn tick(&mut self, nticks: u64, mem: &mut [u8]) -> bool {
+    fn tick(&mut self, nticks: usize, mem: &mut [u8]) -> bool {
         self.div_counter += nticks;
         mem[register::DIV as usize] = (self.div_counter >> 9) as u8;
 
@@ -148,7 +148,7 @@ impl Timer {
     fn set_tma(&mut self, tma: u8)   { self.tma = tma; }
 
     fn set_tima(&mut self, tima: u8) { 
-        self.tima_counter = (tima as u64) << 10; // | (0x3ff & self.tima_counter);
+        self.tima_counter = (tima as usize) << 10; // | (0x3ff & self.tima_counter);
     }
 
     fn set_tima_period(&mut self, period_bits: u8) {
@@ -169,12 +169,12 @@ pub struct Bus {
     pub IE: Interrupt,
     pub IF: Interrupt,
 
-    n_cycles: u64,
+    n_cycles: usize,
     dirty_addrs: Vec<u16>,
 
     dma_running: bool,
     dma_counter: u16,
-    dma_start_n_cyc: u64,
+    dma_start_n_cyc: usize,
     dma_start_addr: u16,
 
     timer: Timer,
@@ -292,7 +292,7 @@ impl Bus {
         &self.dirty_addrs
     }
 
-    pub fn sync(&mut self, n_cycles: u64) {
+    pub fn sync(&mut self, n_cycles: usize) {
         let nticks = n_cycles - self.n_cycles;
 
         if self.joypad.should_trigger_intr() {
@@ -313,7 +313,7 @@ impl Bus {
         }
 
         if self.dma_running {
-            while ((self.dma_counter * 4) as u64) < n_cycles - self.dma_start_n_cyc {
+            while ((self.dma_counter * 4) as usize) < n_cycles - self.dma_start_n_cyc {
                 let src_idx = (self.dma_start_addr + self.dma_counter) as usize;
                 let dst_idx = (0xfe00 + self.dma_counter) as usize;
                 self.mem[dst_idx] = self.mem[src_idx];

@@ -8,7 +8,7 @@ use duplicate::duplicate_item;
 pub struct Instruction {
     pub opcode: Opcode,
     pub length: u16,
-    pub cycles: u64,
+    pub cycles: usize,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, FromRepr, strum_macros::Display)]
@@ -226,7 +226,7 @@ impl fmt::Display for Instruction {
 }
 
 impl Instruction {
-    fn new(opcode: Opcode, length: u16, cycles: u64) -> Instruction {
+    fn new(opcode: Opcode, length: u16, cycles: usize) -> Instruction {
         Instruction {
             opcode, length, cycles,
         }

@@ -52,8 +52,8 @@ pub struct Cpu {
     pub interrupt_master_enable: bool,
     pub status: Status,
 
-    pub n_cycles: u64,
-    pub n_instrs: u64,
+    pub n_cycles: usize,
+    pub n_instrs: usize,
     pub bus: Bus,
 }
 

@@ -10,7 +10,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 
 // TODO move this somewhere so it's not duplicated
-const CYCLES_PER_FRAME: u64 = 114 * 154 * 4;
+const CYCLES_PER_FRAME: usize = 114 * 154 * 4;
 const SCREEN_DISP_X: u32 = 160;
 const SCREEN_DISP_Y: u32 = 144;
 
