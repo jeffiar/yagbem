@@ -6,18 +6,15 @@ const CYCLES_PER_LINE: usize = 114 * 4;
 const LINES_PER_FRAME: usize = 154;
 const VBLANK_LINE_NUM: usize = 144;
 
-const SCREEN_FULL_Y: usize = 256;
 const SCREEN_DISP_X: usize = 160;
 const SCREEN_DISP_Y: usize = 144;
 const SCREEN_N_PIX: usize = SCREEN_DISP_X * SCREEN_DISP_Y;
-// const SCREEN_NUM_DOTS: usize = SCREEN_DISP_X * 3 * SCREEN_DISP_Y;
 
 pub struct Ppu {
     dot_num: usize,  /// T-cycle number in the scanline, between 0 and 114 * 4 - 1.
     line_num: usize, /// scanline number, between 0 and 153. VBlank starts on line 144
     frame_num: usize, /// frame number. Total cycle count is (frame_num * CYCLES_PER_FRAME) +
                     /// (line_num * CYCLES_PER_LINE) + dot_num
-
     lcdc: LCDC,
 
     should_trigger_vblank: bool,
@@ -39,10 +36,6 @@ bitflags! {
         const OBJ_ENABLE       = (1 << 1);
         const WDW_BGD_ENABLE   = (1 << 0);
     }
-}
-
-pub struct Frame {
-    data: [u8; SCREEN_N_PIX * 3],
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -69,6 +62,10 @@ impl Mode {
 
 }
 
+pub struct Frame {
+    data: [u8; SCREEN_N_PIX * 3],
+}
+
 impl Frame {
     fn new() -> Frame {
         Frame {
@@ -89,6 +86,111 @@ impl Frame {
 
     fn clear(&mut self) {
         self.data = [0; SCREEN_N_PIX * 3];
+    }
+}
+
+struct Sprite {
+    y: isize,
+    x: isize,
+    tile_id: usize,
+    priority: bool,
+    flipped_x: bool,
+    flipped_y: bool,
+    palette: PaletteType,
+}
+
+impl Sprite {
+    fn new(obj_data: &[u8]) -> Sprite {
+        Sprite {
+            y: obj_data[0] as isize - 16,
+            x: obj_data[1] as isize - 8,
+            tile_id: obj_data[2] as usize,
+            priority: (obj_data[3] & (1 << 7)) != 0,
+            flipped_y: (obj_data[3] & (1 << 6)) != 0,
+            flipped_x: (obj_data[3] & (1 << 5)) != 0,
+            palette: if (obj_data[3] & (1 << 4)) != 0 {
+                PaletteType::Object1
+            } else {
+                PaletteType::Object0
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum PaletteType {
+    Background, Object0, Object1,
+}
+
+use strum_macros::FromRepr;
+#[derive(FromRepr, Clone, Copy)]
+#[repr(u8)]
+enum Color {
+    White, Light, Dark, Black,
+}
+
+impl Color {
+    const fn to_rgb(&self) -> (u8,u8,u8) {
+        match self {
+            Color::White => (0xff, 0xff, 0xff),
+            Color::Light => (0xaa, 0xaa, 0xaa),
+            Color::Dark  => (0x55, 0x55, 0x55),
+            Color::Black => (0x00, 0x00, 0x00),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Palette {
+    colors: [Color; 4],
+}
+
+impl Palette {
+    fn from_u8(bits: u8) -> Palette {
+        Palette {
+            colors: [
+                Color::from_repr((bits >> 0) & 3).unwrap(),
+                Color::from_repr((bits >> 2) & 3).unwrap(),
+                Color::from_repr((bits >> 4) & 3).unwrap(),
+                Color::from_repr((bits >> 6) & 3).unwrap(),
+            ]
+        }
+    }
+
+    fn apply(&self, color_num: u8) -> Color {
+        self.colors[color_num as usize]
+    }
+}
+
+bitflags! {
+    struct StatFlags: u8 {
+        const LINEMATCH = 1 << 6;
+        const OAM       = 1 << 5;
+        const VBLANK    = 1 << 4;
+        const HBLANK    = 1 << 3;
+    }
+}
+
+struct StatReg {
+    flags: StatFlags,
+    line_match: bool,
+    mode: Mode,
+}
+
+impl StatReg {
+    fn new(flags: StatFlags, line_match: bool, mode: Mode) -> StatReg {
+        StatReg { flags, line_match, mode }
+    }
+
+    fn intr_condition_met(&self) -> bool {
+        (self.mode == Mode::Hblank  &&  self.flags.contains(StatFlags::HBLANK))
+            ||(self.mode == Mode::Vblank  &&  self.flags.contains(StatFlags::VBLANK))
+            ||(self.mode == Mode::OamScan &&  self.flags.contains(StatFlags::OAM))
+            ||(self.line_match && self.flags.contains(StatFlags::LINEMATCH))
+    }
+
+    fn to_u8(&self) -> u8 {
+        self.flags.bits() | (self.line_match as u8) << 2 | (self.mode as u8)
     }
 }
 
@@ -169,51 +271,6 @@ impl Ppu {
         }
     }
 
-    fn calc_color(&self, x: u8, y: u8, mem: &[u8], tile_map_flag: bool, palette: Palette) -> Color {
-        let dx = (x % 8) as usize;
-        let dy = (y % 8) as usize;
-        let tile_num = ((y as usize / 8) * 32) + (x as usize / 8);
-        let tile_id = if tile_map_flag {
-            mem[0x9c00 + tile_num]
-        } else {
-            mem[0x9800 + tile_num]
-        };
-        let tile_data_addr = if self.lcdc.contains(LCDC::TILEDATA) {
-            0x8000 + tile_id as usize * 16
-        } else {
-            if tile_id >= 128 {
-                (0x9000 + (tile_id as isize - 256) * 16) as usize
-            } else {
-                0x9000 + tile_id as usize * 16
-            }
-        };
-
-        let bitplane_0 = mem[tile_data_addr + 2*dy];
-        let bitplane_1 = mem[tile_data_addr + 2*dy + 1];
-        palette.get_color((bitplane_0 & (0x80 >> dx)) != 0,
-                          (bitplane_1 & (0x80 >> dx)) != 0)
-    }
-
-    fn calc_bgd_wdw_color(&self, x: usize, y: usize, mem: &[u8], palette: Palette) -> Color {
-        if !self.lcdc.contains(LCDC::WDW_BGD_ENABLE) {
-            return Color::White;
-        }
-
-        let wx = mem[register::WX as usize];
-        let wy = mem[register::WY as usize];
-        let wdw_x = x as isize - wx as isize + 7;
-        let wdw_y = y as isize - wy as isize;
-        if self.lcdc.contains(LCDC::WDW_ENABLE) && (wdw_x >= 0) && (wdw_y >= 0)  {
-            return self.calc_color(wdw_x as u8, wdw_y as u8, mem, self.lcdc.contains(LCDC::WDW_TILEMAP), palette);
-        }
-
-        let scx = mem[register::SCX as usize];
-        let scy = mem[register::SCY as usize];
-        let bgd_x = scx.wrapping_add(x as u8);
-        let bgd_y = scy.wrapping_add(y as u8);
-        self.calc_color(bgd_x, bgd_y, mem, self.lcdc.contains(LCDC::BGD_TILEMAP), palette)
-    }
-
     fn draw_line(&mut self, mem: &[u8]) {
         let mut color_data = [0u8; SCREEN_DISP_X];
         let mut palettes = [PaletteType::Background; SCREEN_DISP_X];
@@ -272,7 +329,7 @@ impl Ppu {
         }
     }
 
-    fn draw_window(&self, line: &mut [u8], mem: &[u8]) {
+    fn draw_window(&self, _line: &mut [u8], _mem: &[u8]) {
         todo!()
     }
 
@@ -311,7 +368,7 @@ impl Ppu {
             let bp1 = (bitplane_1 & (0x80 >> s)) != 0;
             let cnum = bp0 as u8 | (bp1 as u8) << 1;
 
-            if (obj.priority && line[x as usize] == 0) || (cnum != 0) {
+            if (obj.priority && line[x as usize] == 0) || (!obj.priority && cnum != 0) {
                 line[x as usize] = cnum;
                 palettes[x as usize] = obj.palette;
             }
@@ -354,115 +411,4 @@ impl Ppu {
     }
     pub fn get_lcd_control(&self) -> u8 { self.lcdc.bits() }
 
-}
-
-struct Sprite {
-    y: isize,
-    x: isize,
-    tile_id: usize,
-    priority: bool,
-    flipped_x: bool,
-    flipped_y: bool,
-    palette: PaletteType,
-}
-
-impl Sprite {
-    fn new(obj_data: &[u8]) -> Sprite {
-        Sprite {
-            y: obj_data[0] as isize - 16,
-            x: obj_data[1] as isize - 8,
-            tile_id: obj_data[2] as usize,
-            priority: (obj_data[3] & (1 << 7)) != 0,
-            flipped_y: (obj_data[3] & (1 << 6)) != 0,
-            flipped_x: (obj_data[3] & (1 << 5)) != 0,
-            palette: if (obj_data[3] & (1 << 4)) != 0 {
-                PaletteType::Object1
-            } else {
-                PaletteType::Object0
-            }
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-enum PaletteType {
-    Background, Object0, Object1,
-}
-
-use strum_macros::FromRepr;
-#[derive(FromRepr, Clone, Copy)]
-#[repr(u8)]
-enum Color {
-    White, Light, Dark, Black,
-}
-
-impl Color {
-    const fn to_rgb(&self) -> (u8,u8,u8) {
-        match self {
-            Color::White => (0xff, 0xff, 0xff),
-            Color::Light => (0xaa, 0xaa, 0xaa),
-            Color::Dark  => (0x55, 0x55, 0x55),
-            Color::Black => (0x00, 0x00, 0x00),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Palette {
-    colors: [Color; 4],
-}
-
-impl Palette {
-    fn from_u8(bits: u8) -> Palette {
-        Palette {
-            colors: [
-                Color::from_repr((bits >> 0) & 3).unwrap(),
-                Color::from_repr((bits >> 2) & 3).unwrap(),
-                Color::from_repr((bits >> 4) & 3).unwrap(),
-                Color::from_repr((bits >> 6) & 3).unwrap(),
-            ]
-        }
-    }
-
-    fn get_color(&self, bp0: bool, bp1: bool) -> Color {
-        let idx = bp0 as u8 | (bp1 as u8) << 1;
-        self.colors[idx as usize]
-    }
-
-    fn apply(&self, color_num: u8) -> Color {
-        self.colors[color_num as usize]
-    }
-}
-
-
-bitflags! {
-    struct StatFlags: u8 {
-        const LINEMATCH = 1 << 6;
-        const OAM       = 1 << 5;
-        const VBLANK    = 1 << 4;
-        const HBLANK    = 1 << 3;
-    }
-}
-
-struct StatReg {
-    flags: StatFlags,
-    line_match: bool,
-    mode: Mode,
-}
-
-impl StatReg {
-    fn new(flags: StatFlags, line_match: bool, mode: Mode) -> StatReg {
-        StatReg { flags, line_match, mode }
-    }
-
-    fn intr_condition_met(&self) -> bool {
-        (self.mode == Mode::Hblank  &&  self.flags.contains(StatFlags::HBLANK))
-            ||(self.mode == Mode::Vblank  &&  self.flags.contains(StatFlags::VBLANK))
-            ||(self.mode == Mode::OamScan &&  self.flags.contains(StatFlags::OAM))
-            ||(self.line_match && self.flags.contains(StatFlags::LINEMATCH))
-    }
-
-    fn to_u8(&self) -> u8 {
-        self.flags.bits() | (self.line_match as u8) << 2 | (self.mode as u8)
-    }
 }
