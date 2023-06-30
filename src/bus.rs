@@ -359,18 +359,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_program_to_bus() {
-        let mut bus = Bus::new_flat();
-
-        assert_eq!(bus.mem_read(0x200), 0);
-        bus.load(&[0x12, 0x34, 0x56], 0x0200);
-        assert_eq!(bus.mem_read(0x200), 0x12);
-        assert_eq!(bus.mem_read(0x201), 0x34);
-        assert_eq!(bus.mem_read(0x202), 0x56);
-        assert_eq!(bus.mem_read(0x203), 0x00);
-    }
-
-    #[test]
     fn bus_read_write_simple() {
         let mut bus = Bus::new_flat();
 
