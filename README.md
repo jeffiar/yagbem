@@ -34,7 +34,7 @@ I am grateful to the following websites in particular:
 
 ## Caveats
 
-The code is not perfect, but I am not a professional programmer :) It works well enough to run simple games (like Kirby's dreamland and Link to the Past!) and that is enough to make me happy for now. If you want to try to run it yourself, I have only compiled it on my computer (x86 linux) and I have no guarantees that it will compile on yours. You would have to install rust and the SDL2 library.
+The code is not perfect, but I am not a professional programmer :) It works well enough to run simple games (like Kirby's dreamland and Link to the Past!) and that is enough to make me happy for now. Some other games don't really work. If you want to try to run it yourself, I have no idea if it will compile on your computer since I have only compiled it on my computer so far (x86 Linux).
 
 ## Screenshots
 
